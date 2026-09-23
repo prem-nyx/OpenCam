@@ -14,6 +14,7 @@
   <a href="https://github.com/prem-nyx/OpenCam/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/prem-nyx/OpenCam?style=for-the-badge" alt="License">
   </a>
+  
   <a href="https://github.com/prem-nyx/OpenCam">
     <img src="https://img.shields.io/github/stars/prem-nyx/OpenCam?style=for-the-badge" alt="GitHub Stars">
   </a>
