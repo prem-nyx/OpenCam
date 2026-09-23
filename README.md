@@ -1,396 +1,276 @@
-<h1 align="center">
-  <sub>
-    <img src="imgs/icon2.png" width="150">
-  </sub>
-  <br>
-  OpenCam
-</h1>
+<div align="center">
 
-<p align="center">
-  Turn your Android phone into a wireless camera for your computer.
-</p>
+# OpenCam
 
-<p align="center">
-  <a href="https://github.com/prem-nyx/OpenCam/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/prem-nyx/OpenCam?style=for-the-badge" alt="License">
-  </a>
-  
-  <a href="https://github.com/prem-nyx/OpenCam">
-    <img src="https://img.shields.io/github/stars/prem-nyx/OpenCam?style=for-the-badge" alt="GitHub Stars">
-  </a>
-</p>
+### Turn your Android phone into a wireless camera for your computer.
 
-<p align="center">
-  <strong>OpenCam</strong> is an open-source project for turning an Android device into a
-  network camera that can be used by applications on a computer.
-</p>
+[![Development Status](https://img.shields.io/badge/status-active%20development-orange.svg)](#-current-status)
+[![GitHub Stars](https://img.shields.io/github/stars/prem-nyx/OpenCam?style=flat&logo=github)](https://github.com/prem-nyx/OpenCam/stargazers)
+
+</div>
 
 ---
 
-## Table of Contents
+## 📷 What is OpenCam?
 
-1. [About OpenCam](#about-opencam)
-2. [Current Status](#current-status)
-3. [Architecture](#architecture)
-4. [Milestones](#milestones)
-5. [Repository Structure](#repository-structure)
-6. [Linux Controller](#linux-controller)
-7. [Android Application](#android-application)
-8. [Windows Implementation](#windows-implementation)
-9. [Building](#building)
-10. [Project Origin](#project-origin)
-11. [Contributing](#contributing)
-12. [License](#license)
+OpenCam is an open-source project for turning Android devices into
+wireless camera and, eventually, microphone sources for computers.
+
+The project started from the existing **VCamdroid** codebase and is
+being developed toward a broader cross-platform architecture.
+
+The current development focus is **Linux**, with native Linux control,
+V4L2 integration, secure device pairing, and a foundation for future
+cross-platform support.
 
 ---
 
-## About OpenCam
+## 🚧 Current Status
 
-OpenCam is an open-source attempt to turn an Android smartphone into a
-general-purpose camera source for a computer.
+OpenCam is under active development.
 
-The project uses the Android device's camera, streams the video over the network,
-and bridges that stream into a virtual camera device on the computer.
-
-The long-term goal is to provide a flexible camera platform that can work across
-Linux and Windows, support multiple transport methods, and eventually provide
-both video and audio capabilities.
-
-OpenCam is currently under active development.
+| Milestone | Status |
+|---|---|
+| M1 — Android → Linux video pipeline | ✅ Complete |
+| M2 — Linux controller | ✅ Complete |
+| M3 — Pairing & network security | 🚧 Next |
+| M4 — Resolution & performance | 📋 Planned |
+| M5 — USB / ADB transport | 📋 Planned |
+| M6 — Audio & A/V synchronization | 📋 Planned |
+| M7 — Android UI & OpenCam rebrand | 📋 Planned |
+| M8 — Windows implementation | 📋 Planned |
+| M9 — Packaging & release | 📋 Planned |
 
 ---
 
-## Current Status
+## 🧩 How It Works
 
-### Milestone 1 — Android → Linux Video Pipeline
-
-**Complete**
-
-The first milestone established the complete media path:
+The current Linux implementation uses the following pipeline:
 
 ```text
-Android Camera
-      │
-      ▼
-VCamdroid RTSP Server
-      │
-      │ Wi-Fi
-      ▼
-Linux
-      │
-      ▼
-FFmpeg
-      │
-      ▼
-V4L2 Loopback
-      │
-      ▼
-/dev/video*
-      │
-      ▼
-OBS / Webcam Applications
+┌──────────────────┐
+│   Android Phone  │
+│     VCamdroid    │
+└────────┬─────────┘
+         │
+         │ RTSP
+         ▼
+┌──────────────────┐
+│ Linux Controller │
+│     OpenCam      │
+└────────┬─────────┘
+         │
+         │ FFmpeg
+         ▼
+┌──────────────────┐
+│  V4L2 Loopback   │
+│   /dev/videoX    │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ OBS / Browser /  │
+│ Other Applications│
+└──────────────────┘
 ```
 
-The Android device successfully streams camera video to Linux,
-where FFmpeg converts the RTSP stream into a V4L2 virtual camera.
+The Android device is controlled through a TCP connection while the
+camera stream is delivered through RTSP.
 
 ---
 
-### Milestone 2 — OpenCam Linux Controller
+## 🐧 Current Linux Support
 
-**Complete**
+The Linux controller currently provides:
 
-Milestone 2 replaced the temporary Python controller with a native C++17
-Linux controller.
+- 📱 Android device pairing through QR codes
+- 🔌 TCP-based device control
+- 📡 RTSP stream activation
+- 🎥 FFmpeg-based video bridging
+- 📹 V4L2 loopback camera output
+- 🔄 Device reconnect support
+- 🌐 Dynamic local-network address detection
+- 🖥️ Compatibility with applications such as OBS and browser-based
+  webcam capture
 
-The controller currently provides:
-
-- Dynamic QR-code pairing
-- TCP control connection
-- Android device descriptor parsing
-- Native activation packet generation
-- RTSP readiness detection
-- FFmpeg process management
-- Dynamic V4L2 device discovery
-- V4L2 loopback integration
-- Client disconnect handling
-- Automatic reconnection without restarting OpenCam
-
-The current validated video configuration is:
-
-```text
-Resolution: 640 × 480
-Framerate: 30 FPS
-Codec: H.264
-Pixel format: YUV420P
-Transport: RTSP over TCP
-Output: V4L2 loopback
-```
-
-End-to-end latency during milestone validation was approximately
-2–4 seconds, with smooth video playback.
+The current validated configuration uses a 640×480 H.264 video stream.
+Higher resolutions and performance improvements are planned for later
+milestones.
 
 ---
 
-## Architecture
+## 🗺️ Roadmap
 
-The current Linux video architecture is:
+OpenCam is being developed incrementally rather than attempting to
+replace the original implementation all at once.
 
-```text
-┌──────────────────────┐
-│    Android Camera   │
-└──────────┬───────────┘
-           │
-           │ RTSP
-           ▼
-┌──────────────────────┐
-│ Android RTSP Server │
-│      Port 8554      │
-└──────────┬───────────┘
-           │
-           │ Wi-Fi
-           ▼
-┌──────────────────────┐
-│  OpenCam Controller  │
-│       Linux          │
-│      Port 6969       │
-└──────────┬───────────┘
-           │
-           │ FFmpeg
-           ▼
-┌──────────────────────┐
-│   V4L2 Loopback      │
-│    /dev/video*       │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ OBS / Browser /      │
-│ Webcam Applications  │
-└──────────────────────┘
-```
+### M1 — Android → Linux Video Pipeline
 
-The control and media paths are currently separate:
+- Android camera streaming
+- RTSP reception
+- FFmpeg integration
+- V4L2 loopback
+- OBS/browser compatibility
 
-```text
-Control:
-Android ───── TCP :6969 ─────> OpenCam
+**Status: ✅ Complete**
 
-Video:
-Android ───── RTSP :8554 ────> FFmpeg ───> V4L2
-```
+### M2 — OpenCam Linux Controller
 
-Security improvements to these paths are planned for a future milestone.
+- Native Linux controller
+- VCamdroid protocol implementation
+- Device descriptor parsing
+- Activation packet generation
+- Dynamic QR pairing
+- Virtual camera discovery
+- Reconnection handling
 
----
+**Status: ✅ Complete**
 
-## Milestones
+### M3 — Pairing & Network Security
 
-| Milestone | Description | Status |
-|---|---|---|
-| M1 | Android → Linux video pipeline | ✅ Complete |
-| M2 | Native Linux controller | ✅ Complete |
-| M3 | Pairing & network security | 🔜 Next |
-| M4 | Resolution, performance & latency | Planned |
-| M5 | USB / ADB transport | Planned |
-| M6 | Audio & A/V synchronization | Planned |
-| M7 | Android UI & OpenCam rebrand | Planned |
-| M8 | Windows implementation | Planned |
-| M9 | Packaging, release & final testing | Planned |
+- Device identity
+- Authenticated pairing
+- Session authentication
+- Replay protection
+- LAN security
+- Direct/hotspot networking investigation
 
-The roadmap may evolve as development continues.
+**Status: 🚧 Next**
 
----
+### M4 — Resolution & Performance
 
-## Repository Structure
+- Capability-driven resolution selection
+- 720p / 1080p investigation
+- Latency reduction
+- Buffering improvements
+- CPU/GPU performance investigation
 
-```text
-OpenCam/
-│
-├── android/
-│   └── Android application
-│
-├── linux/
-│   ├── CMakeLists.txt
-│   └── src/
-│       ├── device_descriptor.*
-│       ├── ffmpeg_runner.*
-│       ├── main.cpp
-│       ├── network.*
-│       ├── qr.*
-│       ├── rtsp_probe.*
-│       ├── stream_options.*
-│       └── v4l2_device.*
-│
-├── windows/
-│   └── Original Windows implementation
-│
-├── Docs/
-│   ├── OpenCam_Milestone_1_Report.md
-│   └── OpenCam_Milestone_2_Report.md
-│
-├── imgs/
-├── LICENSE
-└── README.md
-```
+**Status: 📋 Planned**
+
+### M5 — USB / ADB Transport
+
+- USB connectivity
+- ADB transport
+- Lower-latency transport investigation
+- Wireless vs wired transport selection
+
+**Status: 📋 Planned**
+
+### M6 — Audio & A/V Synchronization
+
+- Microphone streaming
+- Audio transport
+- Video/audio synchronization
+- Wireless microphone functionality
+
+**Status: 📋 Planned**
+
+### M7 — Android UI & OpenCam Rebrand
+
+- OpenCam Android interface
+- Removal of legacy VCamdroid-facing UI
+- OpenCam visual identity
+- Application/package rework
+
+**Status: 📋 Planned**
+
+### M8 — Windows Implementation
+
+- Native Windows controller
+- Windows virtual-camera integration
+- Cross-platform controller architecture
+
+**Status: 📋 Planned**
+
+### M9 — Packaging & Release
+
+- Installation workflow
+- Dependency management
+- v4l2loopback setup
+- Documentation
+- Release builds
+- Final testing
+
+**Status: 📋 Planned**
 
 ---
 
-## Linux Controller
+## 🌱 Project Origin
 
-The Linux implementation is written in **C++17** and uses CMake.
+OpenCam builds upon the open-source
+[VCamdroid](https://github.com/darusc/VCamdroid) project by **Darusc**.
 
-The current controller is responsible for:
+VCamdroid provided the original Android camera streaming architecture
+and Windows-side implementation that OpenCam is building upon.
 
-1. Determining the local IPv4 address.
-2. Generating a pairing QR code.
-3. Accepting the Android TCP connection.
-4. Receiving and parsing the Android device descriptor.
-5. Detecting the OpenCam V4L2 loopback device.
-6. Sending the Android activation packet.
-7. Waiting for the Android RTSP server.
-8. Starting FFmpeg.
-9. Writing the decoded video into the V4L2 loopback device.
-10. Cleaning up when the Android device disconnects.
-11. Accepting another Android connection.
+OpenCam is being developed in a different direction, with a focus on:
 
-### Linux Dependencies
-
-The current implementation requires:
-
-- C++17 compiler
-- CMake
-- FFmpeg
-- FFprobe
-- `qrencode`
-- `v4l2loopback`
-
-The V4L2 loopback module is currently treated as a system prerequisite.
-
-Automatic installation and system integration are planned for a future
-packaging milestone.
-
-### Building
-
-From the repository root:
-
-```bash
-cd linux
-cmake -S . -B build
-cmake --build build
-```
-
-The resulting executable is:
-
-```text
-linux/build/opencam
-```
-
----
-
-## Android Application
-
-The Android application is currently based on the Android side of the
-original VCamdroid implementation.
-
-It currently provides the camera capture and RTSP streaming functionality
-used by the Linux controller.
-
-The Android application communicates with the computer using the project's
-TCP control protocol and provides an RTSP stream containing the camera video.
-
-The Android source package currently retains the original:
-
-```text
-com.darusc.vcamdroid
-```
-
-namespace.
-
-The Android-side rebranding and restructuring are planned for a future
-milestone.
-
----
-
-## Windows Implementation
-
-The repository currently contains the original VCamdroid Windows
-implementation.
-
-The Windows implementation uses:
-
-- C++
-- DirectShow
-- FFmpeg
-- Softcam
-- ADB
-
-It remains in the repository as the existing Windows baseline while
-OpenCam development focuses on the Linux implementation.
-
-A dedicated OpenCam Windows implementation is planned for a future milestone.
-
----
-
-## Project Origin
-
-OpenCam builds upon the original
-[VCamdroid](https://github.com/darusc/VCamdroid) project created by
-**darusc**.
-
-The original project provided the foundation for the Android camera
-application, RTSP streaming architecture, and Windows implementation.
-
-OpenCam extends that foundation with a new project direction focused on:
-
-- Linux support
-- Native Linux control
-- V4L2 virtual camera output
+- Native Linux support
+- Linux-side device control
+- V4L2 virtual-camera integration
 - Cross-platform architecture
 - Secure device pairing
-- Multiple network transport modes
-- Improved resolution and performance handling
-- Future audio support
-- Future USB / ADB transport
-- OpenCam-specific Android and desktop interfaces
+- Multiple transport options
+- Higher-resolution streaming
+- Performance and latency improvements
+- Future audio and A/V synchronization
+- A dedicated OpenCam Android interface
 
-Original VCamdroid code and third-party components remain subject to their
-respective licenses.
-
----
-
-## Contributing
-
-OpenCam is currently under active development.
-
-Contributions, experiments, bug reports, documentation improvements, and
-technical discussions are welcome.
-
-Before making significant changes, please check the current milestone and
-project documentation in the `Docs/` directory.
-
-### Development Principles
-
-OpenCam development follows a few principles:
-
-- Prefer established protocols and standards.
-- Avoid unnecessary complexity.
-- Do not reinvent cryptographic primitives.
-- Verify behavior experimentally where possible.
-- Keep platform-specific code isolated.
-- Preserve working functionality while introducing new architecture.
-- Document significant engineering decisions.
+The original upstream project and its contributors will be properly
+attributed as part of OpenCam's licensing and attribution work.
 
 ---
 
-## License
+## 🙏 Acknowledgements
 
-OpenCam is distributed under the license included in this repository.
+OpenCam would not exist without the projects and contributors whose
+work provided its foundation.
 
-See [`LICENSE`](LICENSE) for details.
+### VCamdroid
+
+Original project:
+
+https://github.com/darusc/VCamdroid
+
+Created by **Darusc**.
+
+OpenCam contains and builds upon code originating from VCamdroid.
+The applicable upstream copyright notices and license terms will be
+preserved.
+
+### Softcam
+
+OpenCam also builds upon components originating from **Softcam**.
+
+The applicable upstream attribution and license terms will be
+documented as part of the project's licensing work.
+
+### Other Dependencies
+
+OpenCam uses additional open-source libraries and system components.
+Their licenses and attribution notices will be documented as the
+project approaches its release stage.
 
 ---
 
-<p align="center">
-  Built by <strong>V3NOM</strong> (<a href="https://github.com/prem-nyx">@prem-nyx</a>)
-</p>
+## 📜 License
+
+OpenCam's licensing and third-party attribution are currently being
+formalized.
+
+The project contains code originating from existing open-source
+projects, including VCamdroid and Softcam. Their respective copyright
+notices and license requirements will be preserved.
+
+A complete attribution and licensing document will be included before
+the first formal OpenCam release.
+
+---
+
+<div align="center">
+
+### Built by V3NOM
+
+[GitHub](https://github.com/prem-nyx)
+
+</div>
