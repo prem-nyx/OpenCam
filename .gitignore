@@ -1,0 +1,32 @@
+dist
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+
+# Linux / CMake
+linux/build/
+cmake-build-*/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Generated binaries / packages
+*.apk
+*.aab
+
+# Local environment / secrets
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+
+# OS files
+.DS_Store
+Thumbs.db

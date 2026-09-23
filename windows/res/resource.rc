@@ -1,0 +1,2 @@
+id ICON "vcamdroid.ico"
+#include "wx/msw/wx.rc"
