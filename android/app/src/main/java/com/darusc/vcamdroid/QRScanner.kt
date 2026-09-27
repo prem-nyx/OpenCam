@@ -15,13 +15,14 @@ class QRScanner() {
 
     data class Result(
         var address: String,
-        var port: Int
+        var port: Int,
+        var pairingToken: String
     )
 
     private var options: BarcodeScannerOptions
     private var scanner: BarcodeScanner
 
-    private var addressRegex = Regex("""\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b""")
+    private var addressRegex = Regex("""^(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})$""")
 
     private var enabled = false
 
@@ -73,13 +74,12 @@ class QRScanner() {
     }
 
     private fun parseResult(value: String): Result? {
-        val splits = value.split(":")
-        if(splits.size != 2) {
-            return null
-        }
-        if(splits[0].matches(addressRegex)) {
-            return Result(splits[0], splits[1].toInt())
-        }
-        return null
+        val splits = value.split('|')
+        if (splits.size != 4 || splits[0] != "OCAM1") return null
+        if (!splits[1].matches(addressRegex)) return null
+        val port = splits[2].toIntOrNull() ?: return null
+        if (port !in 1..65535) return null
+        if (splits[3].length != 64 || splits[3].any { it !in "0123456789abcdefABCDEF" }) return null
+        return Result(splits[1], port, splits[3])
     }
 }

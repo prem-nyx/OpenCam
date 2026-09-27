@@ -52,6 +52,14 @@ struct DeviceDescriptor
 		return rtspUrl;
 	}
 
+	std::string redactedUrl() const
+	{
+		if (rtspUrl.rfind("rtsp://", 0) != 0) return "<invalid-url>";
+		const auto at = rtspUrl.find('@', 7);
+		if (at == std::string::npos) return rtspUrl;
+		return "rtsp://<redacted>@" + rtspUrl.substr(at + 1);
+	}
+
 	const std::string& protocol() const
 	{
 		return rtspProtocol;

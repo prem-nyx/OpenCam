@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.logging.Filter
+import java.security.SecureRandom
 
 class Streamer(
     private var options: StreamOptions,
@@ -36,13 +37,20 @@ class Streamer(
 
     companion object {
         const val PORT = 8554
-        const val URL = "rtsp://localhost:$PORT/live"
     }
 
     private val TAG = "VCamdroid"
 
     private val rtspServerCamera2 = RtspServerCamera2(openGlView, this, PORT)
     private val connectionManager = ConnectionManager.getInstance()
+    private val mediaUsername = "opencam"
+    private val sessionMediaPassword = connectionManager.mediaPassword()
+    private var mediaPassword = sessionMediaPassword ?: ByteArray(32)
+        .also { SecureRandom().nextBytes(it) }
+        .let { android.util.Base64.encodeToString(it, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP) }
+    private val streamPath = "/live/" + ByteArray(16).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    private val serverStreamUrl = "rtsp://localhost:$PORT$streamPath"
 
     private var bitrateAdapter = BitrateAdapter {
         if (options.adaptiveBitrateEnabled) {
@@ -51,27 +59,46 @@ class Streamer(
     }
 
     init {
+        Logger.log("STREAMER", if (connectionManager.isAuthenticated() && sessionMediaPassword != null)
+            "Initializing authenticated Wi-Fi media session with session-derived RTSP credentials"
+        else "Initializing legacy media session")
+        // The declared RTSP-Server 1.3.6 API supports per-server credentials.
+        rtspServerCamera2.streamClient.setAuthorization(mediaUsername, mediaPassword)
+        rtspServerCamera2.streamClient.forceIpType(com.pedro.rtspserver.server.IpType.IPv4)
+        rtspServerCamera2.streamClient.setLogs(false)
         val connectionManager = ConnectionManager.getInstance()
         val localIpAddress = connectionManager.localIpAddress
 
         getSupportedResolutions(context) { back, front ->
+            Logger.log("STREAMER", "Camera capabilities ready (back=${back.size}, front=${front.size})")
             val descriptor = DeviceDescriptor(
                 android.os.Build.MODEL,
-                URL.replace("localhost", localIpAddress),
+                if (connectionManager.isAuthenticated()) {
+                    serverStreamUrl.replace("localhost", localIpAddress)
+                } else {
+                    serverStreamUrl.replace("localhost", "$mediaUsername:$mediaPassword@$localIpAddress")
+                },
                 back,
                 front,
                 FilterRepository.filters
             )
 
+            Logger.log("STREAMER", "Submitting device descriptor")
             connectionManager.sendDescriptor(descriptor)
         }
     }
 
     fun stop() {
+        Logger.log("STREAMER", "Stopping media session and rotating RTSP credentials")
         rtspServerCamera2.stopPreview()
         if (rtspServerCamera2.isStreaming) {
             rtspServerCamera2.stopStream()
         }
+        // Rotate credentials after the server is stopped so stale URLs fail.
+        val replacement = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        rtspServerCamera2.streamClient.setAuthorization(mediaUsername,
+            android.util.Base64.encodeToString(replacement, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP))
+        mediaPassword = ""
     }
 
     /**
@@ -100,6 +127,7 @@ class Streamer(
      * Set a new resolution. Requires a stream restart
      */
     fun setResolution(width: Int, height: Int) {
+        if (width !in 160..8192 || height !in 160..8192 || width.toLong() * height > 16_777_216L) return
         if (options.width == width && options.height == height)
             return
 
@@ -111,6 +139,7 @@ class Streamer(
     }
 
     fun rotate(degress: Int) {
+        if (degress !in setOf(0, 90, 180, 270)) return
         options.rotation += degress
         rtspServerCamera2.glInterface.setStreamRotation(options.rotation)
         // rtspServerCamera2.glInterface.setRotation(options.rotation)
@@ -175,6 +204,7 @@ class Streamer(
      * Set a new target fps. Requires a stream restart
      */
     fun setFps(fps: Int) {
+        if (fps !in 1..60) return
         if (options.fps == fps)
             return
 
@@ -184,6 +214,7 @@ class Streamer(
     }
 
     fun setZoom(zoom: Float) {
+        if (!zoom.isFinite() || zoom !in 1.0f..10.0f) return
         rtspServerCamera2.zoom = zoom
     }
 
@@ -216,11 +247,13 @@ class Streamer(
      * Set a new bitrate
      */
     fun setBitrate(bitrate: Int) {
+        if (bitrate !in 64..25000) return
         options.adaptiveBitrateEnabled = false
         rtspServerCamera2.setVideoBitrateOnFly(bitrate * 1024)
     }
 
     fun setAdaptiveBitrate(min: Int, max: Int) {
+        if (min !in 64..25000 || max !in min..25000) return
         options.adaptiveBitrateEnabled = true
         options.adaptiveBitrateMin = min * 1024
         options.adaptiveBitrateMax = max * 1024
@@ -298,7 +331,7 @@ class Streamer(
                     options.bitrate,
                     0
                 )
-                rtspServerCamera2.startStream(URL)
+                rtspServerCamera2.startStream(serverStreamUrl)
                 Logger.log("STREAMER", "Stream started")
             } catch (e: Exception) {
                 Logger.log("STREAMER", "Error preparing stream")
@@ -322,6 +355,7 @@ class Streamer(
         }
 
         setStabilization(options.stabilization)
+        setFlash(options.flashEnabled)
         setFocus(options.focusMode)
         rtspServerCamera2.setVideoCodec(if (options.h265Enabled) VideoCodec.H265 else VideoCodec.H264)
 

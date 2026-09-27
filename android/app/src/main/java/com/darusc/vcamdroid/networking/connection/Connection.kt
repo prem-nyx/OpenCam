@@ -9,8 +9,9 @@ abstract class Connection {
     class ConnectionFailedException(host: String, reason: String) : Exception("Connection to $host failed! Reason: $reason")
 
     interface Listener {
-        fun onBytesReceived(buffer: ByteArray, bytes: Int)
-        fun onDisconnected()
+        fun onFrameReceived(connection: TCPConnection, type: Int, payload: ByteArray)
+        fun onLegacyBytes(connection: TCPConnection, buffer: ByteArray, bytes: Int)
+        fun onDisconnected(connection: TCPConnection)
     }
 
     abstract val localIpAddress: String

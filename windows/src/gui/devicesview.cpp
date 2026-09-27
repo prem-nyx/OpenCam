@@ -35,7 +35,7 @@ DevicesView::DevicesView(wxWindow* parent, const std::vector<DeviceDescriptor>& 
         long index = list->InsertItem(i, std::to_string(i + 1));
 
         list->SetItem(index, 1, dev.name());
-        list->SetItem(index, 2, dev.url());
+        list->SetItem(index, 2, dev.redactedUrl());
 
         // 3. Max Back Resolution
         list->SetItem(index, 3, getMaxResString(dev.backResolutions()));

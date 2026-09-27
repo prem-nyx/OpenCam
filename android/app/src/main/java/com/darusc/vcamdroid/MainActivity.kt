@@ -1,22 +1,14 @@
 package com.darusc.vcamdroid
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Rect
-import android.hardware.camera2.CaptureRequest
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import android.util.Size
-import android.view.View
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
@@ -31,7 +23,6 @@ import com.darusc.vcamdroid.networking.ConnectionManager
 import com.darusc.vcamdroid.util.Logger
 import com.darusc.vcamdroid.video.Camera
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import java.security.Permission
 
 class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallback {
 
@@ -42,8 +33,10 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
     private var camera: Camera? = null
 
     private var isConnecting = false
-
-    private val TAG = "VCamdroid"
+    private var selectedMode = ConnectionManager.ConnectionMode.WIFI
+    private val modePreferences by lazy {
+        getSharedPreferences("connection_preferences", MODE_PRIVATE)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +49,24 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
         }
 
         enableEdgeToEdge()
+        selectedMode = modePreferences.getString("mode", null)
+            ?.let { runCatching { ConnectionManager.ConnectionMode.valueOf(it) }.getOrNull() }
+            ?: ConnectionManager.ConnectionMode.WIFI
+        viewBinding.connectionModeGroup.check(
+            if (selectedMode == ConnectionManager.ConnectionMode.WIFI)
+                viewBinding.wifiModeButton.id else viewBinding.usbModeButton.id
+        )
+        viewBinding.connectionModeGroup.setOnCheckedChangeListener { _, checkedId ->
+            val nextMode = if (checkedId == viewBinding.usbModeButton.id)
+                ConnectionManager.ConnectionMode.USB else ConnectionManager.ConnectionMode.WIFI
+            if (nextMode != selectedMode) {
+                selectedMode = nextMode
+                modePreferences.edit().putString("mode", nextMode.name).apply()
+                isConnecting = false
+                connectionManager.close()
+                if (camera != null) startSelectedMode()
+            }
+        }
         initialize()
     }
 
@@ -64,7 +75,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
         connectionManager = ConnectionManager.getInstance(this)
         if(camera != null) {
             camera!!.start(Size(1280, 720), CameraSelector.DEFAULT_BACK_CAMERA)
-            connectWIFI()
+            startSelectedMode()
         }
     }
 
@@ -96,25 +107,28 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
         }
     }
 
-    override fun onConnectionSuccessful(connectionMode: ConnectionManager.Mode) {
-        qrscanner.stop()
-        Logger.log("MAIN", "Connection successful $connectionMode")
+    override fun onConnectionSuccessful(connectionMode: ConnectionManager.ConnectionMode) {
+        runOnUiThread {
+            isConnecting = false
+            qrscanner.stop()
+            Logger.log("MAIN", "Connection successful $connectionMode")
 
-        val intent = Intent(this, StreamActivity::class.java)
-        startActivity(intent)
+            val intent = Intent(this, StreamActivity::class.java)
+            startActivity(intent)
+        }
     }
 
-    override fun onConnectionFailed(connectionMode: ConnectionManager.Mode) {
+    override fun onConnectionFailed(connectionMode: ConnectionManager.ConnectionMode) {
         runOnUiThread {
-            if (connectionMode == ConnectionManager.Mode.USB && hasWifiConnection()) {
-                // If usb connection failed try again over wifi
-                connectWIFI()
-                Toast.makeText(this, "Connection failed. Try in WiFi mode or restart app", Toast.LENGTH_LONG).show()
+            isConnecting = false
+            Logger.log("MAIN", "Connection failed in explicitly selected $connectionMode mode")
+            if (connectionMode == ConnectionManager.ConnectionMode.WIFI) {
+                viewBinding.overlay.setInstruction("Wi-Fi selected: scan the current OpenCam QR to retry")
+                qrscanner.start()
+                Toast.makeText(this, "Wi-Fi pairing failed. Scan the current Linux QR again.", Toast.LENGTH_LONG).show()
             } else {
-                isConnecting = false
-                qrscanner.stop()
-                Logger.log("MAIN", "Error: Cannot connect!")
-                Toast.makeText(this, "Connection failed. Restart app to retry connecting again", Toast.LENGTH_LONG).show()
+                viewBinding.overlay.setInstruction("USB / ADB selected: enable USB debugging and run the legacy Windows server")
+                Toast.makeText(this, "USB/ADB connection failed. Check debugging and the Windows server.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -145,13 +159,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
                 this
             )
             camera!!.start(Size(1280, 720), CameraSelector.DEFAULT_BACK_CAMERA)
-
-            // Prioritize the usb connection through adb
-            if (hasUsbConnection()) {
-                connectUSB()
-            } else if (hasWifiConnection()) {
-                connectWIFI()
-            }
+            startSelectedMode()
         }
     }
 
@@ -165,11 +173,13 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
                     qrscanner.stop()
                     MaterialAlertDialogBuilder(this)
                         .setTitle("Connect via WiFi")
-                        .setMessage("Connect to ${result.address}:${result.port}?")
+                        .setMessage("Pair with ${result.address}:${result.port}? Verify that this is your OpenCam host.")
                         .setPositiveButton("Connect") { _, _ ->
-                            connectionManager.connect(result.address, result.port)
+                            isConnecting = true
+                            viewBinding.overlay.setInstruction("Wi-Fi selected: authenticating with ${result.address}:${result.port}…")
+                            connectionManager.connect(result.address, result.port, result.pairingToken)
                         }
-                        .setNegativeButton("Cancel") { _, _ -> qrscanner.start() }
+                        .setNegativeButton("Cancel") { _, _ -> startSelectedMode() }
                         .show()
                 } else {
                     Logger.log("MAIN", "Invalid QR code")
@@ -179,28 +189,21 @@ class MainActivity : AppCompatActivity(), ConnectionManager.ConnectionStateCallb
         }
     }
 
-    private fun hasUsbConnection(): Boolean {
-        val intent = applicationContext.registerReceiver(
-            null,
-            IntentFilter("android.hardware.usb.action.USB_STATE")
-        )
-        return intent?.getBooleanExtra("connected", false) == true
-    }
-
-    private fun hasWifiConnection(): Boolean {
-        val connectivityManager = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-    }
-
-    private fun connectUSB() {
-        connectionManager.connect(6969)
-    }
-
-    private fun connectWIFI() {
-        // Start the QRScanner so it can scan the image frames received from the camera
-        // Actual WIFI connection is tried only on scan success
-        qrscanner.start()
+    private fun startSelectedMode() {
+        when (selectedMode) {
+            ConnectionManager.ConnectionMode.WIFI -> {
+                isConnecting = false
+                viewBinding.overlay.setInstruction("Wi-Fi selected: scan the OpenCam pairing QR code")
+                qrscanner.start()
+            }
+            ConnectionManager.ConnectionMode.USB -> {
+                qrscanner.stop()
+                viewBinding.overlay.setInstruction("USB / ADB selected: enable USB debugging and run the legacy Windows server")
+                if (!isConnecting) {
+                    isConnecting = true
+                    connectionManager.connect(6969)
+                }
+            }
+        }
     }
 }

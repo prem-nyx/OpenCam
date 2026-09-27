@@ -49,10 +49,7 @@ std::vector<std::uint8_t> buildActivationPacket(
 {
     std::vector<std::uint8_t> packet;
 
-    packet.reserve(41);
-
-    // Packet type: ACTIVATION
-    packet.push_back(0x02);
+    packet.reserve(40);
 
     // Stream options
     writeInt32(packet, options.fps);

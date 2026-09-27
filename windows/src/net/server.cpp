@@ -1,3 +1,8 @@
+#include <winsock2.h>
+#include <array>
+#include <chrono>
+#include <vector>
+
 #include "net/server.h"
 
 #include "logger.h"
@@ -10,7 +15,9 @@ Server::Server(int port, const ConnectionListener& connectionListener) :
 	acceptor(context)
 {
 	try {
-		tcp::endpoint endpoint(tcp::v4(), port);
+		// The legacy Windows path is supported only through the authorized ADB
+		// reverse tunnel. Do not expose its unauthenticated protocol to the LAN.
+		tcp::endpoint endpoint(asio::ip::address_v4::loopback(), port);
 		acceptor.open(endpoint.protocol());
 
 		acceptor.set_option(tcp::acceptor::reuse_address(true));
@@ -33,25 +40,7 @@ Server::Server(int port, const ConnectionListener& connectionListener) :
 Server::HostInfo Server::GetHostInfo()
 {
 	std::string name = asio::ip::host_name();
-	std::string ip_str = "127.0.0.1"; // Default fallback
-
-	try {
-		// Get the active network adapter by creating a dummy UDP connection 
-		// and let the OS determine what network adapter will be used
-		udp::resolver resolver(context);
-		udp::socket socket(context);
-
-		// This might throw if there is NO network adapter enabled
-		socket.connect(udp::endpoint(asio::ip::address::from_string("8.8.8.8"), 80));
-		ip_str = socket.local_endpoint().address().to_string();
-		socket.close();
-	}
-	catch (std::exception& e) 
-	{
-		logger << "[SERVER] Warning: Could not detect local IP (" << e.what() << "). Defaulting to localhost.\n";
-	}
-
-	return { name, ip_str, std::to_string(port) };
+	return { name, "127.0.0.1", std::to_string(port) };
 }
 
 void Server::Send(int id, const unsigned char* bytes, size_t size) const
@@ -128,27 +117,58 @@ void Server::TCPDoAccept()
 	acceptor.async_accept([&, this](asio::error_code ec, tcp::socket socket) {
 		if (!ec)
 		{
-			logger << "[SERVER] Device connected." << socket.remote_endpoint() << std::endl;
+			try
+			{
+				logger << "[SERVER] Device connected over loopback/ADB.\n";
+				const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+				auto readExact = [&](uint8_t* destination, size_t size) {
+					size_t offset = 0;
+					while (offset < size)
+					{
+						const auto now = std::chrono::steady_clock::now();
+						if (now >= deadline) throw std::runtime_error("Descriptor timeout");
+						const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+						timeval timeout{};
+						timeout.tv_sec = static_cast<long>(remaining.count() / 1000000);
+						timeout.tv_usec = static_cast<long>(remaining.count() % 1000000);
+						fd_set readable;
+						FD_ZERO(&readable);
+						FD_SET(socket.native_handle(), &readable);
+						if (select(0, &readable, nullptr, nullptr, &timeout) <= 0)
+							throw std::runtime_error("Descriptor timeout");
+						const size_t count = socket.read_some(asio::buffer(destination + offset, size - offset));
+						if (count == 0) throw std::runtime_error("Descriptor EOF");
+						offset += count;
+					}
+				};
+				std::array<uint8_t, 4> lengthBytes{};
+				readExact(lengthBytes.data(), lengthBytes.size());
+				const uint32_t descriptorLength =
+					(static_cast<uint32_t>(lengthBytes[0]) << 24) |
+					(static_cast<uint32_t>(lengthBytes[1]) << 16) |
+					(static_cast<uint32_t>(lengthBytes[2]) << 8) |
+					static_cast<uint32_t>(lengthBytes[3]);
+				if (descriptorLength == 0 || descriptorLength > 64 * 1024)
+					throw std::runtime_error("Invalid descriptor frame length");
+				std::vector<uint8_t> received(descriptorLength);
+				readExact(received.data(), received.size());
+				DeviceDescriptor descriptor = Serializer::DeserializeDeviceDescriptor(
+					received.data(), received.size());
 
-			// Read the only message sent by the client (the device descriptor)
-			// We need to read this here because the connection listener
-			// needs all the data sent by the client (trough GetConnectedDevicesInfo)
-			// otherwise the connection would need to be passed to the connection
-			std::array<char, 512> buffer;
-			size_t size = socket.read_some(asio::buffer(buffer, 512));
-			
-			// auto ipaddress = socket.remote_endpoint().address().to_string();
-			auto descriptor = Serializer::DeserializeDeviceDescriptor((const uint8_t*)buffer.data(), size);
-
-			auto conn = std::make_shared<Connection>(
-				std::move(socket),
-				descriptor,
-				std::bind(&Server::OnConnectionDisconnected, this, std::placeholders::_1),
-				std::bind(&Server::OnConnectionReportingError, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)
-			);
-			connections.push_back(std::move(conn));
-
-			connectionListener.OnDeviceConnected(descriptor);
+				auto conn = std::make_shared<Connection>(
+					std::move(socket), descriptor,
+					std::bind(&Server::OnConnectionDisconnected, this, std::placeholders::_1),
+					std::bind(&Server::OnConnectionReportingError, this, std::placeholders::_1, std::placeholders::_2));
+				connections.push_back(conn);
+				conn->Read();
+				connectionListener.OnDeviceConnected(descriptor);
+			}
+			catch (const std::exception&)
+			{
+				logger << "[SERVER] Rejected invalid or incomplete descriptor.\n";
+				asio::error_code ignored;
+				socket.close(ignored);
+			}
 		}
 		else if (ec != asio::error::operation_aborted)
 		{
@@ -163,14 +183,13 @@ void Server::TCPDoAccept()
 
 void Server::OnConnectionDisconnected(std::shared_ptr<Connection> connection)
 {
-	logger << "[SERVER] Device disconnected: " << connection->descriptor.name() << std::endl;
+	logger << "[SERVER] Device disconnected." << std::endl;
 
 	connections.erase(std::remove(connections.begin(), connections.end(), connection), connections.end());
 	connectionListener.OnDeviceDisconnected(connection->descriptor);
 }
 
-void Server::OnConnectionReportingError(std::shared_ptr<Connection> connection, const uint8_t* bytes, size_t size)
+void Server::OnConnectionReportingError(std::shared_ptr<Connection> connection, const Connection::ErrorReport& report)
 {
-	auto report = Serializer::DeserializeErrorReport(bytes, size);
 	connectionListener.OnDeviceErrorReported(connection->descriptor, report);
 }

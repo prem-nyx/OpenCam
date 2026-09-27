@@ -56,5 +56,5 @@ private:
 
 	void TCPDoAccept();
 	void OnConnectionDisconnected(std::shared_ptr<Connection> connection);
-	void OnConnectionReportingError(std::shared_ptr<Connection> connection, const uint8_t* bytes, size_t size);
+	void OnConnectionReportingError(std::shared_ptr<Connection> connection, const Connection::ErrorReport& report);
 };

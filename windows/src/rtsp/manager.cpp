@@ -29,7 +29,7 @@ namespace RTSP
 		auto& descriptor = descriptors[descriptorId];
 		auto& url = descriptor.url();
 
-		logger << "[RTSP Manager] Connecting to stream " << url << "\n";
+		logger << "[RTSP Manager] Connecting to stream " << descriptor.redactedUrl() << "\n";
 		
 		Stop();
 		

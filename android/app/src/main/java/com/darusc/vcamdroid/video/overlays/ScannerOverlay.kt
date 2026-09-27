@@ -51,6 +51,10 @@ class ScannerOverlay(context: Context, attrs: AttributeSet) : LinearLayout(conte
         addView(textView)
     }
 
+    fun setInstruction(instruction: CharSequence) {
+        textView.text = instruction
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
         size = Size(width, height)

@@ -20,6 +20,13 @@ data class DeviceDescriptor(
 ) {
 
     fun serialize(): ByteArray {
+        require(name.isNotBlank() && name.toByteArray(StandardCharsets.UTF_8).size <= 256)
+        require(url.toByteArray(StandardCharsets.UTF_8).size <= 2048)
+        require(frontResolutions.size <= 128 && backResolutions.size <= 128 && filterInfos.size <= 128)
+        (frontResolutions + backResolutions).forEach { (width, height) ->
+            require(width in 1..8192 && height in 1..8192 && width.toLong() * height <= 16_777_216L)
+        }
+        filterInfos.forEach { require(it.name.toByteArray(StandardCharsets.UTF_8).size in 1..128) }
         var requiredSize = 0
 
         // 2 bytes needed for header (size of string) + the size of the actual string
@@ -37,6 +44,7 @@ data class DeviceDescriptor(
         requiredSize += filterInfos.sumOf { 2 + it.name.toByteArray(StandardCharsets.UTF_8).size + 1 }
 
         val buffer = ByteBuffer.allocate(requiredSize)
+        require(requiredSize <= ControlProtocol.MAX_PAYLOAD)
         buffer.order(ByteOrder.BIG_ENDIAN)
 
         fun putString(s: String) {

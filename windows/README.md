@@ -1,5 +1,15 @@
 # VCamdroid - Windows server
 
+## Support status
+
+The Windows server is a legacy ADB-only controller. Its unauthenticated legacy
+protocol is bound to `127.0.0.1` and is intended to be reached only through an
+authorized ADB reverse tunnel; do not expose or forward port 6969 to a LAN.
+The versioned, QR-secret-authenticated Wi-Fi protocol is currently implemented
+by the Linux controller and Android client, not by this Windows server. As a
+result, Windows QR/Wi-Fi pairing is intentionally unsupported until that
+protocol is ported. The ADB descriptor uses a bounded 4-byte length frame.
+
 ## Requirments & Dependencies
 
 - Visual Studio 2022 with Dekstop C++ development package installed
@@ -24,4 +34,3 @@ For more information about the building process of softcam see [this](https://gi
 Open the ```VCamdroid.sln``` and build the solution in ```Release x64``` configuration. All required files will be placed in the ```dist``` directory. 
 
 Now from the root directory you can run ```install.bat``` to install the DirectShow filter (softcam.dll)
-
