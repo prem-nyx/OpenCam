@@ -36,16 +36,15 @@ int main()
     assert(deriveSessionKey(secret, serverNonce, clientNonce, key));
     std::array<std::uint8_t, 32> zeroSessionKey{};
     assert(deriveMediaPassword(zeroSessionKey) ==
-           "6971359bf756f8937f274a269eec51e357b04f38626c36eecc7227f07c559d7b");
+       "3d71315941fed222d06ace2d99f2f5210fdbe4df5c3be2dc673e13c414bac9b5");
     int sockets[2]{};
     assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
-    AuthenticatedChannel sender{sockets[0], key};
-    AuthenticatedChannel receiver{sockets[1], key};
+    AuthenticatedChannel sender{sockets[0], key, true};
+    AuthenticatedChannel receiver{sockets[1], key, false};
     const std::vector<std::uint8_t> message{'f', 'r', 'a', 'm', 'e'};
     bool sent = false;
-    std::thread writer([&] {
-        sent = sender.send(Type::DESCRIPTOR, message, 3000);
-    });
+    std::thread writer([&]
+                       { sent = sender.send(Type::DESCRIPTOR, message, 3000); });
     Frame received{};
     const bool receivedOk = receiver.receive(received, 3000);
     writer.join();
@@ -62,17 +61,28 @@ int main()
         0, 0        // filters
     };
     bool rejected = false;
-    try { (void)parseDeviceDescriptor(invalidUtf8); }
-    catch (const std::exception&) { rejected = true; }
+    try
+    {
+        (void)parseDeviceDescriptor(invalidUtf8);
+    }
+    catch (const std::exception &)
+    {
+        rejected = true;
+    }
     assert(rejected);
 
     std::vector<std::uint8_t> hugeCount{
         0, 1, 'n', 0, 1, 'u',
-        0xff, 0xff
-    };
+        0xff, 0xff};
     rejected = false;
-    try { (void)parseDeviceDescriptor(hugeCount); }
-    catch (const std::exception&) { rejected = true; }
+    try
+    {
+        (void)parseDeviceDescriptor(hugeCount);
+    }
+    catch (const std::exception &)
+    {
+        rejected = true;
+    }
     assert(rejected);
 
     assert(isAllowedRtspEndpoint("rtsp://10.0.0.2:8554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));

@@ -1,4 +1,4 @@
-# VCamdroid - Android client
+# OpenCam - Android client
 
 ### Dependencies
 

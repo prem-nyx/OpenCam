@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Vcamdroid"
+rootProject.name = "OpenCam"
 include(":app")
  

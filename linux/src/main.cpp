@@ -86,7 +86,7 @@ namespace
 
         if (!makeProof(
                 secret,
-                "OpenCam client proof v1",
+                "OpenCam client proof v2",
                 serverNonce,
                 clientNonce,
                 expectedClientProof) ||
@@ -109,7 +109,7 @@ namespace
 
         if (!makeProof(
                 secret,
-                "OpenCam server proof v1",
+                "OpenCam server proof v2",
                 serverNonce,
                 clientNonce,
                 serverProof) ||
@@ -134,7 +134,8 @@ namespace
 
         AuthenticatedChannel channel{
             clientSocket,
-            sessionKey};
+            sessionKey,
+            true};
 
         Frame descriptorFrame{};
 
