@@ -2,7 +2,7 @@
 
 # OpenCam
 
-### Turn your Android phone into a wireless camera for your computer.
+### Turn your Android phone into a camera for your computer.
 
 [![Development Status](https://img.shields.io/badge/status-active%20development-orange.svg)](#-current-status)
 [![GitHub Stars](https://img.shields.io/github/stars/prem-nyx/OpenCam?style=flat&logo=github)](https://github.com/prem-nyx/OpenCam/stargazers)
@@ -13,15 +13,20 @@
 
 ## 📷 What is OpenCam?
 
-OpenCam is an open-source project for turning Android devices into
-wireless camera and, eventually, microphone sources for computers.
+OpenCam is an open-source project that turns Android devices into cameras
+for computers over a local network.
 
-The project started from the existing **VCamdroid** codebase and is
-being developed toward a broader cross-platform architecture.
+The current implementation focuses on **Linux + Android**, providing:
 
-The current development focus is **Linux**, with native Linux control,
-V4L2 integration, secure device pairing, and a foundation for future
-cross-platform support.
+- QR-based device pairing
+- Authenticated control communication
+- Encrypted control frames
+- RTSP video streaming
+- FFmpeg-based video bridging
+- V4L2 virtual-camera output
+
+Future development will extend OpenCam toward microphone streaming,
+A/V synchronization, additional transports, and broader platform support.
 
 ---
 
@@ -33,24 +38,53 @@ OpenCam is under active development.
 |---|---|
 | M1 — Android → Linux video pipeline | ✅ Complete |
 | M2 — Linux controller | ✅ Complete |
-| M3 — Pairing & network security | 🚧 Next |
+| M3 — Pairing & network security | 🟢 Substantially complete |
 | M4 — Resolution & performance | 📋 Planned |
 | M5 — USB / ADB transport | 📋 Planned |
 | M6 — Audio & A/V synchronization | 📋 Planned |
-| M7 — Android UI & OpenCam rebrand | 📋 Planned |
+| M7 — Android UI & OpenCam rebrand | 🚧 In progress |
 | M8 — Windows implementation | 📋 Planned |
 | M9 — Packaging & release | 📋 Planned |
 
+> **Current validated scope:** Linux ↔ Android over Wi-Fi.
+> Other platforms and transports remain future work.
+
 ---
 
-## 🧩 How It Works
+## 🧩 Current Implementation
+
+| Component | Current implementation |
+|---|---|
+| Platform | Linux + Android |
+| Network transport | Wi-Fi / TCP |
+| Device pairing | QR-based |
+| Control authentication | Mutual authentication |
+| Control encryption | AES-256-GCM |
+| Key derivation | HKDF-SHA256 |
+| Media transport | RTSP over TCP |
+| Video codec | H.264 |
+| Linux output | V4L2 virtual camera |
+| Validated resolution | 640×480 |
+| Camera consumers | OBS, browsers, and other V4L2 applications |
+
+The control and media channels are separate.
+
+The current control plane is authenticated and encrypted. The RTSP media
+plane does not yet provide TLS/RTSPS encryption.
+
+For the detailed security architecture, validation results, and known
+limitations, see [`SECURITY.md`](SECURITY.md).
+
+---
+
+## 🗺️ How It Works
 
 The current Linux implementation uses the following pipeline:
 
 ```text
 ┌──────────────────┐
 │   Android Phone  │
-│     VCamdroid    │
+│     OpenCam      │
 └────────┬─────────┘
          │
          │ RTSP
@@ -68,41 +102,57 @@ The current Linux implementation uses the following pipeline:
 └────────┬─────────┘
          │
          ▼
-┌──────────────────┐
-│ OBS / Browser /  │
+┌───────────────────┐
+│ OBS / Browser /   │
 │ Other Applications│
-└──────────────────┘
+└───────────────────┘
 ```
 
-The Android device is controlled through a TCP connection while the
-camera stream is delivered through RTSP.
+The Android device is paired and controlled through a TCP connection.
+The camera stream is delivered through RTSP, received by the Linux
+controller, and bridged into a V4L2 virtual camera using FFmpeg.
 
 ---
 
-## 🐧 Current Linux Support
+## 🔐 Security
 
-The Linux controller currently provides:
+Security hardening is a major part of the current development milestone.
 
-- 📱 Android device pairing through QR codes
-- 🔌 TCP-based device control
-- 📡 RTSP stream activation
-- 🎥 FFmpeg-based video bridging
-- 📹 V4L2 loopback camera output
-- 🔄 Device reconnect support
-- 🌐 Dynamic local-network address detection
-- 🖥️ Compatibility with applications such as OBS and browser-based
-  webcam capture
+The Linux ↔ Android control plane currently provides:
 
-The current validated configuration uses a 640×480 H.264 video stream.
-Higher resolutions and performance improvements are planned for later
-milestones.
+- 🔑 QR-based pairing using a random pairing secret
+- 🤝 Mutual authentication
+- 🔒 AES-256-GCM encrypted control frames
+- 🧬 HKDF-SHA256 session key derivation
+- ↔️ Directional session keys
+- 🔢 Sequence-based replay/reordering protection
+- 📦 Bounded protocol parsing
+- 🌐 RTSP endpoint validation
+- 🛡️ Shell-free FFprobe/FFmpeg process execution
+- 🧰 FFmpeg process and file-descriptor isolation
+
+The implementation has been validated with a real Android device over
+Wi-Fi, including encrypted control traffic and end-to-end video delivery.
+
+### Current security limitations
+
+The security model is still under development.
+
+In particular:
+
+- RTSP media is not currently protected by TLS/RTSPS.
+- The current FFmpeg media pipeline can expose the RTSP credential through
+  the process command line.
+- The current protocol does not provide forward secrecy.
+- Additional resource, malformed-peer, and network edge-case testing
+  remains ongoing.
+
+See [`SECURITY.md`](SECURITY.md) for the complete security status and
+future hardening work.
 
 ---
 
-## 🗺️ Roadmap
-
-OpenCam is being developed incrementally rather than attempting to
-replace the original implementation all at once.
+## 🛠️ Development Roadmap
 
 ### M1 — Android → Linux Video Pipeline
 
@@ -117,25 +167,30 @@ replace the original implementation all at once.
 ### M2 — OpenCam Linux Controller
 
 - Native Linux controller
-- VCamdroid protocol implementation
 - Device descriptor parsing
 - Activation packet generation
 - Dynamic QR pairing
-- Virtual camera discovery
-- Reconnection handling
+- Virtual-camera integration
+- Connection handling
 
 **Status: ✅ Complete**
 
 ### M3 — Pairing & Network Security
 
-- Device identity
-- Authenticated pairing
-- Session authentication
-- Replay protection
-- LAN security
-- Direct/hotspot networking investigation
+- QR-based device pairing
+- Mutual authentication
+- Encrypted control sessions
+- Replay/reordering protection
+- RTSP endpoint validation
+- Shell-injection remediation
+- FFmpeg process isolation
+- Real-device Wi-Fi validation
+- Security audit and remediation
 
-**Status: 🚧 Next**
+**Status: 🟢 Substantially complete**
+
+Remaining work includes media-plane encryption, additional network
+edge-case testing, and further resource/error-path hardening.
 
 ### M4 — Resolution & Performance
 
@@ -168,11 +223,16 @@ replace the original implementation all at once.
 ### M7 — Android UI & OpenCam Rebrand
 
 - OpenCam Android interface
-- Removal of legacy VCamdroid-facing UI
+- Removal of legacy VCamdroid-facing UI references
 - OpenCam visual identity
-- Application/package rework
+- Android UI refinement
+- Application/package cleanup
 
-**Status: 📋 Planned**
+**Status: 🚧 In progress**
+
+> The Android application is now branded as **OpenCam**. The existing
+> Android package identifier remains unchanged for the current development
+> phase.
 
 ### M8 — Windows Implementation
 
