@@ -36,15 +36,15 @@ OpenCam is under active development.
 
 | Milestone | Status |
 |---|---|
-| M1 — Android → Linux video pipeline | ✅ Complete |
-| M2 — Linux controller | ✅ Complete |
-| M3 — Pairing & network security | 🟢 Substantially complete |
-| M4 — Resolution & performance | 📋 Planned |
-| M5 — USB / ADB transport | 📋 Planned |
-| M6 — Audio & A/V synchronization | 📋 Planned |
-| M7 — Android UI & OpenCam rebrand | 🚧 In progress |
-| M8 — Windows implementation | 📋 Planned |
-| M9 — Packaging & release | 📋 Planned |
+| M1 - Android → Linux video pipeline | ✅ Complete |
+| M2 - Linux controller | ✅ Complete |
+| M3 - Pairing & network security | 🟢 Substantially complete |
+| M4 - Resolution & performance | 📋 Planned |
+| M5 - USB / ADB transport | 📋 Planned |
+| M6 - Audio & A/V synchronization | 📋 Planned |
+| M7 - Android UI & OpenCam rebrand | 🚧 In progress |
+| M8 - Windows implementation | 📋 Planned |
+| M9 - Packaging & release | 📋 Planned |
 
 > **Current validated scope:** Linux ↔ Android over Wi-Fi.
 > Other platforms and transports remain future work.
@@ -120,16 +120,16 @@ Security hardening is a major part of the current development milestone.
 
 The Linux ↔ Android control plane currently provides:
 
-- 🔑 QR-based pairing using a random pairing secret
-- 🤝 Mutual authentication
-- 🔒 AES-256-GCM encrypted control frames
-- 🧬 HKDF-SHA256 session key derivation
-- ↔️ Directional session keys
-- 🔢 Sequence-based replay/reordering protection
-- 📦 Bounded protocol parsing
-- 🌐 RTSP endpoint validation
-- 🛡️ Shell-free FFprobe/FFmpeg process execution
-- 🧰 FFmpeg process and file-descriptor isolation
+-  QR-based pairing using a random pairing secret
+-  Mutual authentication
+-  AES-256-GCM encrypted control frames
+-  HKDF-SHA256 session key derivation
+-  Directional session keys
+-  Sequence-based replay/reordering protection
+-  Bounded protocol parsing
+-  RTSP endpoint validation
+-  Shell-free FFprobe/FFmpeg process execution
+-  FFmpeg process and file-descriptor isolation
 
 The implementation has been validated with a real Android device over
 Wi-Fi, including encrypted control traffic and end-to-end video delivery.
