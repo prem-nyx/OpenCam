@@ -1,500 +1,781 @@
 # OpenCam — Milestone 3 Progress Report
-## Security Remediation, Encryption & Real-Device Integration
 
 **Date:** 28 September 2026  
-**Project:** OpenCam  
-**Scope:** Linux controller ↔ Android camera over Wi-Fi  
-**Milestone:** M3 — Security, networking and integration hardening
+**Milestone:** M3 — Pairing, Network Security & Security Hardening  
+**Scope:** Linux controller ↔ Android client over Wi-Fi
 
 ---
 
 ## 1. Executive Summary
 
-Milestone 3 began as a security audit and remediation pass over the Linux controller, Android streaming application, and legacy Windows implementation.
+Milestone 3 focused on moving OpenCam from a functional network prototype
+toward a hardened Linux ↔ Android Wi-Fi implementation.
 
-The original implementation had several important security weaknesses, including unauthenticated control traffic, shell-mediated probing, weak endpoint validation, descriptor/parser issues, resource/lifecycle problems, and an unauthenticated/unconfidential RTSP media boundary.
+The work covered:
 
-The remediation work substantially improved the architecture.
+- security auditing of the existing control and media architecture
+- removal of shell-mediated RTSP probing
+- bounded network protocol parsing
+- QR-based pairing secrets
+- mutual authentication
+- authenticated session establishment
+- AES-256-GCM encrypted control frames
+- HKDF-SHA256 key derivation
+- directional session keys
+- strict frame sequencing and replay/reordering protection
+- RTSP endpoint validation
+- FFmpeg process isolation
+- file-descriptor isolation
+- bounded FFmpeg diagnostics
+- Android protocol and validation hardening
+- real-device Wi-Fi integration
+- end-to-end RTSP → FFmpeg → V4L2 validation
+- security-focused automated testing
+- runtime packet-capture verification of encrypted control traffic
 
-The current Linux ↔ Android Wi-Fi path now has:
+The current M3 implementation is **substantially complete for the
+Linux ↔ Android Wi-Fi control-plane scope**.
 
-- One-time, short-lived QR pairing credentials.
-- Mutual authentication between Linux and Android.
-- A versioned, bounded control protocol.
-- AES-256-GCM encrypted control-plane frames.
-- HKDF-SHA256 session/key derivation.
-- Directional encryption keys.
-- Strict sequence-number checking.
-- RTSP endpoint allowlisting.
-- Shell-free FFprobe execution.
-- Bounded FFprobe/FFmpeg process lifetimes.
-- FFmpeg child-process descriptor isolation.
-- Bounded FFmpeg stderr diagnostics.
-- Random per-session RTSP paths.
-- Session-derived RTSP credentials.
-- Real physical-device Wi-Fi integration verification.
-- Runtime verification of encrypted control frames using tcpdump.
-- Runtime verification that FFmpeg uses its own RTSP socket rather than inherited OpenCam listener/control sockets.
-- Linux and Android automated test/build validation.
-
-The remaining security limitation is that the current RTSP media plane is not TLS-encrypted, and the FFmpeg CLI currently receives the RTSP credential as part of its input URL. The latter can expose the credential through the FFmpeg process command line to a sufficiently privileged/local observer. This has been identified rather than hidden, and should be addressed in a future media-pipeline/RTSPS phase.
-
----
-
-## 2. Original M3 Security Findings
-
-The audit identified, among other issues:
-
-1. Wildcard TCP/6969 control listener.
-2. No control-channel authentication or encryption.
-3. Shell injection risk in RTSP probing through `std::system`.
-4. Unauthenticated media/control behavior.
-5. Unbounded descriptor/resource accumulation.
-6. Android framing/parser weaknesses.
-7. Unsafe legacy Windows deserialization.
-8. Heuristic interface/address selection.
-9. RTSP server authentication/bind/TLS limitations.
-10. Android lifecycle and EOF handling issues.
-11. Sensitive information appearing in diagnostic/logging paths.
-12. FFmpeg inheriting OpenCam file descriptors.
-13. Missing or weak process shutdown/reaping behavior.
-
-The historical audit remains preserved in `M3_SECURITY_AUDIT.md`.
+The major remaining security limitation is that the RTSP media plane is
+not currently protected by TLS/RTSPS. There is also a known credential
+exposure issue caused by the current FFmpeg command-line media pipeline.
 
 ---
 
-## 3. Control Protocol Remediation
+# 2. M3 Objectives
 
-### Protocol version
+The milestone was intended to address the main security weaknesses
+identified in the earlier OpenCam network implementation.
 
-The Wi-Fi control protocol was upgraded to **OCAM protocol v2**.
+### Primary objectives
 
-The protocol now uses:
-
-- `OCAM1` framing/magic.
-- Explicit protocol version.
-- Message type.
-- Bounded 32-bit payload length.
-- Maximum payload size of 64 KiB.
-- Strict frame parsing.
-- Handshake deadlines.
-- Sequence numbers for authenticated/encrypted frames.
-
-### Pairing
-
-The QR code now contains:
-
-- Linux IPv4 endpoint.
-- Control port 6969.
-- 256-bit random pairing secret.
-
-The pairing secret is:
-
-- Short-lived.
-- One-use.
-- Rotated after successful pairing.
-
-The secret is not logged by OpenCam.
-
-### Mutual authentication
-
-The handshake uses domain-separated HMAC-SHA256 proofs:
-
-- `OpenCam client proof v2`
-- `OpenCam server proof v2`
-
-Both sides prove knowledge of the pairing secret before accepting the session.
-
-### Session key derivation
-
-The control session key is derived using HKDF-SHA256 from:
-
-- The pairing secret.
-- Server nonce.
-- Client nonce.
-- Protocol-specific context.
-
-Independent directional keys are then derived for:
-
-- Linux → Android.
-- Android → Linux.
+1. Authenticate Android ↔ Linux peers.
+2. Protect the control channel against tampering and replay.
+3. Encrypt control-plane traffic.
+4. Validate peer-supplied RTSP endpoints.
+5. Remove shell-injection risks.
+6. Bound network input and connection resources.
+7. Harden Android network parsing and lifecycle handling.
+8. Isolate FFmpeg from OpenCam control sockets and descriptors.
+9. Improve diagnostics without exposing secrets unnecessarily.
+10. Validate the complete implementation on a real Android device.
+11. Document remaining security limitations.
 
 ---
 
-## 4. Control-Plane Encryption
+# 3. Initial Security Findings
 
-After authentication, sensitive control messages are encrypted using:
+The M3 security investigation identified several weaknesses in the
+original architecture.
 
-**AES-256-GCM**
+| Finding | Description | Current status |
+|---|---|---|
+| M3-01 | RTSP URL reached `std::system()` | 🟢 Fixed |
+| M3-02 | Unauthenticated peer-controlled media activation | 🟢/🟡 Hardened |
+| M3-03 | Descriptor/resource accumulation | 🟡 Partially hardened |
+| M3-04 | Android TCP framing/parser weaknesses | 🟢 Hardened |
+| M3-05 | Windows unsafe deserialization | 📋 Outside current Linux scope |
+| M3-06 | Wildcard listener/address selection | 🟢 Hardened |
+| M3-07 | RTSP authentication/TLS limitations | 🟡 Partial |
+| M3-08 | Android lifecycle/timeouts/EOF handling | 🟢 Hardened |
+| M3-09 | Logging of sensitive connection information | 🟢 Improved |
+| M3-10 | Cross-platform activation mismatch | 🟡 Outside current Linux scope |
+| M3-11 | FFmpeg inherited control/listener FDs | 🟢 Fixed |
 
-Encrypted messages include:
+The current milestone intentionally focuses on **Linux ↔ Android Wi-Fi**.
+Windows Wi-Fi support is treated as future work rather than being claimed
+as part of the current implementation.
 
-- Descriptor.
-- Activation.
-- Error reports.
+---
 
-The outer frame header remains visible for framing and routing. The encrypted payload contains:
+# 4. Control Protocol v2
 
-- Sequence number.
-- Ciphertext.
-- GCM authentication tag.
+The control protocol was upgraded from the earlier authenticated
+plaintext design to **protocol version 2**.
 
-The outer header is authenticated as AES-GCM AAD.
-
-Nonce construction uses:
-
-- Direction-specific prefix.
-- Monotonically increasing sequence number.
-
-Strict sequence equality prevents replay/reordering of authenticated encrypted frames.
-
-### Runtime verification
-
-This was verified on the real Wi-Fi connection using `tcpdump`.
-
-A captured packet contained:
+The protocol identifier remains:
 
 ```text
 OCAM
-02
-05
-00000040
 ```
 
-where:
-
-- `OCAM` = OpenCam protocol marker.
-- `02` = protocol v2.
-- `05` = activation message type.
-- `0x40` = 64-byte encrypted wire payload.
-
-The payload bytes appeared as ciphertext rather than readable descriptor/activation fields.
-
-This provides runtime evidence that the v2 control payload is actually encrypted on the network, not merely implemented in source code.
-
----
-
-## 5. RTSP Endpoint Security
-
-Linux no longer accepts an arbitrary RTSP URL from an authenticated peer.
-
-The endpoint validator requires the expected RTSP structure and rejects:
-
-- Unsupported schemes.
-- Unexpected hosts.
-- Unexpected ports.
-- Userinfo where not allowed.
-- Query strings/fragments.
-- Other alternate endpoint forms.
-- Invalid/random-path requirements.
-
-The Android stream uses a random per-session RTSP path.
-
-The media credential is derived from the authenticated control session.
-
----
-
-## 6. Shell Injection Remediation
-
-The original RTSP probe used `std::system()` with a peer-controlled URL.
-
-This was replaced with fork/exec-style argument passing.
-
-The current probe:
-
-- Does not invoke a shell.
-- Uses explicit FFprobe arguments.
-- Uses a protocol allowlist.
-- Uses bounded execution time.
-- Terminates and reaps the child if the deadline is exceeded.
-
-A regression test covers shell-metacharacter handling.
-
-Linux CTest passed:
+The current version is:
 
 ```text
-2/2 tests passed
+OCAM v2
 ```
 
-including the shell-injection regression test.
+The frame header contains:
+
+```text
+magic
+version
+message type
+payload length
+```
+
+The maximum payload size remains bounded at:
+
+```text
+64 KiB
+```
+
+The protocol uses explicit message types for:
+
+- `SERVER_HELLO`
+- `CLIENT_AUTH`
+- `SERVER_AUTH`
+- `DESCRIPTOR`
+- `ACTIVATION`
+- `ERROR_REPORT`
 
 ---
 
-## 7. FFmpeg Process Isolation
+# 5. QR Pairing and Secret Handling
 
-The FFmpeg runner was hardened to:
+The QR code now carries a randomly generated pairing secret.
 
-- Use `fork()` + `execlp()`.
-- Set close-on-exec behavior.
-- Close unrelated file descriptors in the child.
-- Redirect unwanted standard streams.
-- Capture stderr through a bounded pipe.
-- Terminate FFmpeg with SIGTERM first.
-- Escalate to SIGKILL if required.
-- Always wait/reap the child.
-- Close diagnostic descriptors during cleanup.
+The secret is:
 
-### Runtime verification
+- 256 bits
+- intended for a single successful pairing
+- rotated after successful pairing
+- time-limited
 
-A real streaming run showed:
+The pairing secret is not intentionally written to normal OpenCam logs.
+
+The current pairing format is based on the OpenCam protocol v2 structure
+and includes the Linux peer address, control port, and 64-character
+hexadecimal secret.
+
+---
+
+# 6. Mutual Authentication
+
+The Linux controller and Android client perform mutual authentication
+before establishing the authenticated control session.
+
+The authentication proofs use HMAC-SHA256 with versioned domains:
+
+```text
+OpenCam client proof v2
+OpenCam server proof v2
+```
+
+Both sides must demonstrate knowledge of the pairing secret.
+
+An unauthenticated network peer therefore cannot proceed to the
+authenticated descriptor/activation phase.
+
+---
+
+# 7. AES-256-GCM Control-Channel Encryption
+
+The largest security improvement completed during M3 was migration from
+authenticated-but-readable control frames to **AES-256-GCM encrypted
+control frames**.
+
+After the authentication handshake, the following control messages are
+encrypted:
+
+- device descriptors
+- activation packets
+- error reports
+
+The outer protocol header remains visible because it is required for
+framing and routing.
+
+The encrypted payload contains:
+
+```text
+sequence || ciphertext || GCM authentication tag
+```
+
+The sequence number and outer header are incorporated into the
+authenticated encryption construction.
+
+Therefore, a packet observer can still identify the OpenCam frame
+structure, but cannot read the encrypted application payload.
+
+---
+
+# 8. Session Key Derivation
+
+Session keys are derived using **HKDF-SHA256**.
+
+The current session derivation uses:
+
+```text
+salt = serverNonce || clientNonce
+IKM  = pairing secret
+info = "OpenCam control v2 session"
+```
+
+The resulting session material is then used to derive independent
+directional keys.
+
+The directional derivation uses:
+
+```text
+OpenCam control v2 server-to-client
+OpenCam control v2 client-to-server
+```
+
+This separates encryption keys for the two communication directions.
+
+The implementation uses platform cryptographic primitives rather than
+a custom AES implementation.
+
+---
+
+# 9. Nonce and Sequence Construction
+
+AES-GCM nonces combine a direction-specific prefix with the frame
+sequence number.
+
+Current direction identifiers are:
+
+```text
+SRVR
+CLNT
+```
+
+followed by the 64-bit sequence value.
+
+Receivers require the exact expected sequence number.
+
+This prevents:
+
+- replay of previously accepted frames
+- duplicate frames
+- reordered frames
+- simple sequence manipulation
+
+AES-GCM additionally detects ciphertext modification.
+
+---
+
+# 10. Android Protocol Hardening
+
+The Android client was updated to support the v2 encrypted protocol.
+
+The Android implementation now includes:
+
+- v2 protocol negotiation
+- bounded frame parsing
+- exact byte-count reads
+- connection timeouts
+- EOF handling
+- explicit authentication ordering
+- separate send/receive locking
+- AES-GCM encryption/decryption
+- HKDF-based key derivation
+- directional session keys
+- sequence validation
+- tamper detection
+- stronger descriptor and activation validation
+
+A previous full-duplex synchronization issue involving the authenticated
+channel was also corrected by separating send and receive synchronization.
+
+---
+
+# 11. Linux RTSP Endpoint Validation
+
+The Linux controller validates the RTSP endpoint supplied by the
+authenticated Android peer before using it.
+
+The current accepted structure is restricted to the authenticated peer's
+expected IPv4 address and RTSP port.
+
+The expected endpoint uses:
+
+```text
+rtsp://<peer>:8554/live/<random-path>
+```
+
+The endpoint validator rejects unsupported or ambiguous forms including:
+
+- unexpected schemes
+- unexpected hosts
+- unexpected ports
+- userinfo
+- query strings
+- fragments
+- alternate endpoint structures
+
+The stream path is randomized per streaming session.
+
+---
+
+# 12. Shell-Injection Remediation
+
+The earlier implementation used `std::system()` for RTSP probing.
+
+Because the RTSP URL originated from peer-controlled data, this created a
+shell-injection risk.
+
+The RTSP probe was redesigned to use direct process execution:
+
+```text
+fork()
+  ↓
+exec()
+  ↓
+ffprobe
+```
+
+The URL is passed as an argument rather than embedded inside a shell
+command.
+
+This removes shell interpretation from the RTSP probing path.
+
+The FFmpeg runner uses the same direct process-execution approach.
+
+---
+
+# 13. FFmpeg Process Isolation
+
+FFmpeg is launched as a child process of the OpenCam Linux controller.
+
+The process-launch path now includes:
+
+- direct `exec()` invocation
+- close-on-exec handling
+- closing inherited file descriptors
+- controlled stdin/stdout/stderr
+- bounded shutdown
+- SIGTERM followed by SIGKILL when required
+- explicit process reaping
+
+A real-device process inspection was performed during streaming.
+
+The resulting process relationship was:
 
 ```text
 OpenCam
-  └── FFmpeg
+   └── ffmpeg
 ```
 
-The FFmpeg process had its own RTSP socket.
+The FFmpeg RTSP socket was confirmed to be separate from the OpenCam
+control listener.
 
-The socket inode did not match OpenCam's:
+The OpenCam control listener remained owned by the OpenCam process,
+while FFmpeg owned its own RTSP connection socket.
 
-- TCP/6969 listener.
-- Accepted control connection.
+After normal shutdown, the FFmpeg process and associated sockets were
+confirmed to be gone.
 
-This confirmed that FFmpeg did not inherit the OpenCam control/listener sockets.
-
-After normal shutdown, the FFmpeg process and its sockets were gone.
-
-**A-1 process isolation/lifecycle verification: PASS.**
+This provides runtime evidence for both process isolation and normal
+lifecycle cleanup.
 
 ---
 
-## 8. FFmpeg Diagnostics
+# 14. FFmpeg Diagnostics
 
-The original FFmpeg runner discarded stderr, making failures such as exit status `8` impossible to diagnose.
+FFmpeg stderr is now captured through a bounded non-blocking diagnostic
+pipe.
 
-The runner now captures stderr using a non-blocking pipe with a bounded diagnostic buffer.
+Current diagnostic handling includes:
 
-Diagnostics are sanitized before being exposed to OpenCam.
+- non-blocking reads
+- bounded diagnostic storage
+- an 8192-byte diagnostic limit
+- process cleanup
+- stderr capture for connection and media failures
 
-A deterministic negative test using an invalid RTSP endpoint successfully produced:
+A deterministic failing-connection test successfully produced useful
+FFmpeg diagnostics instead of silently hiding the underlying failure.
 
-```text
-Connection refused
-Error opening input
-```
+This significantly improves troubleshooting of RTSP and V4L2 failures.
 
-and OpenCam captured the diagnostic output.
+---
 
-**A-2 diagnostic capture: PASS.**
+# 15. Credential Exposure Investigation
 
-### Remaining secret-handling limitation
+During the M3 security review, the actual FFmpeg process was inspected.
 
-FFmpeg's current RTSP CLI does not expose a dedicated RTSP password option.
-
-The current invocation therefore still contains the RTSP credential in the input URL. This means the credential can appear in:
+The RTSP credential was found to be present in:
 
 ```text
 /proc/<ffmpeg-pid>/cmdline
 ```
 
-and can also be echoed by FFmpeg into stderr.
+A deterministic test also demonstrated that when an RTSP URL containing
+a test credential was supplied to FFmpeg, the credential could appear
+verbatim in FFmpeg stderr.
 
-The stderr path is being treated as a redaction requirement.
+For example, the diagnostic path reproduced the supplied test credential
+inside the FFmpeg error message.
 
-Eliminating the process-command-line exposure completely would require a different media-client architecture, such as an in-process libavformat pipeline or another credential-safe media transport mechanism.
+### Current assessment
 
-This is intentionally recorded as a residual limitation rather than weakening RTSP authentication.
+This is a known security limitation of the current media architecture.
 
----
+The control-plane authentication and encryption are not weakened by this
+finding, but the media credential itself can be exposed through the
+FFmpeg CLI process representation.
 
-## 9. Real Android ↔ Linux Wi-Fi Integration
-
-A physical Android device was used for the integration test.
-
-The following sequence was verified:
-
-1. Android explicitly selected Wi-Fi mode.
-2. USB remained physically connected but did not silently override Wi-Fi mode.
-3. Linux generated a fresh OCAM1 QR.
-4. Android scanned the QR.
-5. Mutual control authentication succeeded.
-6. Android sent the authenticated descriptor.
-7. Linux validated the descriptor.
-8. Linux sent activation.
-9. Android started the camera/RTSP server.
-10. Linux successfully detected RTSP readiness.
-11. Manual bounded FFprobe successfully identified:
-    - H.264 video.
-    - 640×480 video.
-    - AAC audio.
-12. Linux launched FFmpeg.
-13. The final phone-camera → FFmpeg → V4L2 path was exercised successfully after correcting the FFmpeg invocation issue.
-
-The network path therefore progressed from the original connection failures to a working real-device Wi-Fi streaming path.
+A complete fix likely requires a credential-safe media integration that
+does not place the RTSP password in the process command line.
 
 ---
 
-## 10. V4L2 Validation
+# 16. Real-Device Wi-Fi Integration
 
-The OpenCam virtual camera was verified at:
+The updated implementation was tested using an actual Android device
+and Linux host over Wi-Fi.
+
+The verified sequence was:
 
 ```text
+Wi-Fi mode selected
+        ↓
+QR pairing
+        ↓
+TCP control connection
+        ↓
+Mutual authentication
+        ↓
+Encrypted control session
+        ↓
+Descriptor received
+        ↓
+Activation sent
+        ↓
+Android RTSP server starts
+        ↓
+Linux RTSP readiness probe
+        ↓
+FFmpeg starts
+        ↓
+V4L2 virtual camera receives video
+```
+
+The implementation was tested while a USB cable was physically attached
+to the Android device to verify that Wi-Fi mode did not silently fall
+back to USB/loopback behavior.
+
+---
+
+# 17. Real-Device Encryption Verification
+
+The encrypted control protocol was also verified at the network-packet
+level.
+
+A packet capture was taken against the control connection:
+
+```text
+tcpdump -i any -nn -X -s 0 'tcp port 6969'
+```
+
+A captured frame contained the visible protocol header:
+
+```text
+OCAM
+02
+05
+00 00 00 40
+```
+
+The observed fields corresponded to:
+
+```text
+magic      = OCAM
+version    = 2
+type       = ACTIVATION
+wire length = 64 bytes
+```
+
+The payload following the header appeared as non-readable ciphertext.
+
+This provided runtime evidence that the post-handshake control payload
+was no longer transmitted as readable application data.
+
+---
+
+# 18. RTSP and V4L2 Validation
+
+The real camera stream was successfully connected through the complete
+media pipeline:
+
+```text
+Android camera
+      ↓
+RTSP
+      ↓
+FFmpeg
+      ↓
+V4L2 loopback
+      ↓
 /dev/video2
 ```
 
-The device reports the OpenCam v4l2loopback node and supports streaming/output formats including YUV420.
-
-An independent synthetic FFmpeg test succeeded:
-
-```bash
-ffmpeg -hide_banner   -f lavfi -i testsrc=size=640x480:rate=30   -t 3   -vf format=yuv420p   -an   -f v4l2   -pix_fmt yuv420p   /dev/video2
-```
-
-The test produced 90 frames over 3 seconds.
-
-This established that the V4L2 sink can accept the expected YUV420P output independently of the network path.
-
----
-
-## 11. Android Changes
-
-Android-side remediation includes:
-
-- OCAM protocol v2 implementation.
-- AES-256-GCM encrypted control frames.
-- HKDF-SHA256 key derivation.
-- Independent send/receive encryption keys.
-- Strict sequence handling.
-- Fragmented-frame handling.
-- Bounded reads.
-- Authentication failure handling.
-- EOF/cleanup handling.
-- Secure QR token parsing.
-- Random RTSP session paths.
-- Session-derived media credentials.
-- RTSP server logging disabled.
-- Input validation for descriptor/activation fields.
-
-Android unit tests passed after the v2 migration.
-
-A dedicated tamper test was added and passed, verifying that modification of an encrypted frame causes authentication failure.
-
----
-
-## 12. Automated Build/Test Evidence
-
-### Linux
+The OpenCam V4L2 device was verified as:
 
 ```text
-cmake -S linux -B linux/build
-cmake --build linux/build -j2
-ctest --test-dir linux/build --output-on-failure
+card: OpenCam
+driver: v4l2 loopback 7.2.7
 ```
 
-Result:
+The virtual camera supports formats including YUV420.
+
+A synthetic FFmpeg test successfully wrote:
 
 ```text
-Linux build: PASS
-CTest: 2/2 PASS
+640×480
+30 FPS
+YUV420
 ```
 
-### Android
+to `/dev/video2`.
+
+The actual Android camera stream was subsequently validated through the
+same FFmpeg → V4L2 path.
+
+---
+
+# 19. FFmpeg/V4L2 Troubleshooting
+
+During real-device integration, FFmpeg initially failed with a non-zero
+status.
+
+The failure investigation included:
+
+- exposing FFmpeg stderr
+- validating the RTSP endpoint independently
+- testing the V4L2 device
+- verifying supported pixel formats
+- checking installed FFmpeg/FFprobe capabilities
+- testing a synthetic V4L2 source
+- correcting the FFmpeg invocation
+
+A separate test also confirmed that an intentionally invalid RTSP
+endpoint produced a clear connection-refused diagnostic.
+
+The final pipeline successfully reached the virtual camera.
+
+---
+
+# 20. Automated Testing
+
+## Linux
+
+The Linux test suite was updated alongside the v2 protocol.
+
+Validated areas include:
+
+- mutual proof/session authentication
+- session frame authentication
+- malformed input handling
+- invalid UTF-8/count handling
+- RTSP endpoint allowlisting
+- shell-metacharacter handling
+- media credential derivation
+
+The Linux CTest suite completed successfully:
 
 ```text
-./gradlew testDebugUnitTest
-./gradlew assembleDebug
+2/2 tests passed
 ```
 
-Result:
+---
+
+## Android
+
+The Android test suite was migrated from the earlier protocol version
+to the encrypted v2 implementation.
+
+Tests cover:
+
+- token validation
+- fragmented handshake handling
+- authentication interoperability
+- wrong-secret rejection
+- full-duplex authenticated communication
+- RTSP credential derivation
+- AES-GCM tamper detection
+
+The tamper test constructs an authenticated encrypted frame, modifies
+ciphertext, and verifies that the receiver rejects the modified frame.
+
+The Android test suite completed successfully after the v2 migration.
+
+---
+
+# 21. Current M3 Status
+
+| Area | Status |
+|---|---|
+| QR-based pairing | 🟢 Done |
+| Mutual authentication | 🟢 Done |
+| AES-256-GCM control encryption | 🟢 Done |
+| HKDF-SHA256 key derivation | 🟢 Done |
+| Directional session keys | 🟢 Done |
+| Sequence/replay protection | 🟢 Done |
+| Bounded protocol parsing | 🟢 Done |
+| RTSP endpoint validation | 🟢 Done |
+| Shell-injection remediation | 🟢 Done |
+| Android v2 protocol integration | 🟢 Done |
+| Linux/Android automated tests | 🟢 Done |
+| Real-device Wi-Fi integration | 🟢 Done |
+| Encrypted traffic runtime verification | 🟢 Done |
+| FFmpeg process isolation | 🟢 Done |
+| FFmpeg diagnostic capture | 🟢 Done |
+| FFmpeg credential exposure | 🟡 Known limitation |
+| RTSP authentication | 🟡 Partial |
+| RTSP media encryption / RTSPS | 🔴 Not implemented |
+| Forward secrecy | 🔴 Not implemented |
+| Repeated-connection/resource hardening | 🟡 Ongoing |
+| Multi-interface/network edge cases | 🟡 Ongoing |
+| Windows Wi-Fi security | 📋 Future scope |
+
+---
+
+# 22. Remaining M3 Work
+
+The following items remain before M3 can be considered fully closed:
+
+### Media-plane encryption
+
+The current Android RTSP server integration does not expose the
+server-side TLS/RTSPS functionality required by OpenCam.
+
+Therefore the RTSP media plane remains unencrypted.
+
+### Credential-safe media process
+
+The current FFmpeg CLI invocation places the RTSP credential in the
+process argument list.
+
+A future media integration should remove this exposure.
+
+### Resource and hostile-peer testing
+
+Additional testing is still required for:
+
+- repeated connection attempts
+- malformed peers
+- resource exhaustion
+- unusual disconnect sequences
+- multi-interface systems
+- additional lifecycle/error paths
+
+### Forward secrecy
+
+The current PSK-based design does not provide forward secrecy.
+
+This can be evaluated as a future protocol enhancement if the threat
+model requires it.
+
+---
+
+# 23. Current Security Position
+
+The current M3 implementation should **not** be described as a fully
+secure or fully encrypted webcam system.
+
+The accurate security claim is:
+
+> OpenCam provides QR-based pairing, mutual authentication, AES-256-GCM
+> encrypted control communication, validated RTSP endpoints, hardened
+> process execution, and a tested Linux ↔ Android Wi-Fi integration.
+> The RTSP media plane is not currently TLS-encrypted, and the current
+> FFmpeg media pipeline has a known credential-exposure limitation.
+
+This distinction is important:
 
 ```text
-Android unit tests: PASS
-Debug APK build: PASS
+CONTROL PLANE
+QR pairing
+    ↓
+Mutual authentication
+    ↓
+HKDF session keys
+    ↓
+AES-256-GCM
+    ↓
+Sequenced authenticated frames
+    ↓
+Protected control communication
+
+
+MEDIA PLANE
+Android RTSP server
+    ↓
+RTSP over TCP
+    ↓
+FFmpeg
+    ↓
+V4L2
+    ↓
+Virtual camera
+
+Current limitation:
+RTSP media is not yet protected by TLS/RTSPS.
 ```
 
-The APK was installed on the physical Android device for the Wi-Fi integration test.
+---
+
+# 24. Milestone Outcome
+
+M3 moved OpenCam from an unauthenticated network prototype toward a
+substantially hardened Linux ↔ Android system.
+
+The most significant completed security improvements are:
+
+1. **Mutual peer authentication**
+2. **AES-256-GCM encrypted control communication**
+3. **HKDF-derived directional session keys**
+4. **Strict frame sequencing and tamper detection**
+5. **RTSP endpoint validation**
+6. **Shell-injection remediation**
+7. **FFmpeg process and descriptor isolation**
+8. **Bounded diagnostics and network parsing**
+9. **Android and Linux automated security testing**
+10. **Real-device Wi-Fi validation**
+11. **Runtime verification of encrypted control traffic**
+
+The remaining limitations are clearly identified rather than hidden,
+with media-plane encryption and credential-safe FFmpeg integration being
+the most significant outstanding security tasks.
 
 ---
 
-## 13. Current Security Position
+# 25. Presentation-Safe Project Description
 
-OpenCam's security posture is **substantially improved**, but it should not currently be described as secure against a hostile/untrusted network.
+For a project review or presentation, the current M3 state can be
+summarized as:
 
-### Completed / strongly verified
-
-- QR-based pairing.
-- Mutual control authentication.
-- Encrypted control-plane messages.
-- AES-256-GCM.
-- HKDF-SHA256 key derivation.
-- Sequence/replay protection at the frame layer.
-- RTSP endpoint validation.
-- Shell-free RTSP probing.
-- FFmpeg process isolation.
-- Bounded child lifecycle.
-- Bounded diagnostics.
-- Random RTSP paths.
-- Session-derived RTSP credentials.
-- Real Wi-Fi authentication/integration.
-- Runtime encrypted-packet verification.
-- Linux/Android automated tests.
-
-### Remaining
-
-- RTSP media is not TLS-encrypted.
-- RTSP server-side authorization/bind behavior has library limitations.
-- FFmpeg command-line credential exposure remains.
-- Complete credential-redacted diagnostics still need to be finalized.
-- Repeated connection/resource-stress testing remains incomplete.
-- Multi-interface/VPN edge cases remain partially tested.
-- Windows/Linux end-to-end support is intentionally not part of the current Wi-Fi scope.
+> **OpenCam is a Linux–Android webcam streaming system with QR-based
+> pairing, mutually authenticated control communication, AES-256-GCM
+> encrypted control frames, validated RTSP endpoints, hardened FFmpeg
+> process execution, and a V4L2 virtual-camera output path. Milestone 3
+> focused on security hardening and real-device Wi-Fi integration.
+> Media-plane TLS encryption and several cross-platform/network edge
+> cases remain future work.**
 
 ---
 
-## 14. Presentation-Safe Project Claim
+## Appendix — Key Technical Parameters
 
-For a college review, the accurate claim is:
-
-> **OpenCam is a Linux–Android webcam streaming system with QR-based pairing, mutually authenticated control communication, AES-256-GCM encrypted control frames, validated RTSP endpoints, and a V4L2 virtual-camera output path. The current milestone focuses on security hardening and real-device Wi-Fi integration; RTSP media encryption and some cross-platform/network edge cases remain future work.**
-
-Do **not** claim:
-
-- "Fully secure."
-- "Military-grade security."
-- "Everything is encrypted."
-- "Windows support is complete."
-- "RTSPS is implemented."
-
----
-
-## 15. Recommended Next Steps
-
-These are intentionally deferred so the current milestone can be presented cleanly:
-
-### A-3
-Finish credential redaction in diagnostics and document the remaining FFmpeg argv exposure.
-
-### A-4
-Exercise repeated connection/disconnection and resource cleanup.
-
-### M3 media security
-Investigate RTSPS/TLS or an authenticated encrypted media tunnel.
-
-### M3 robustness
-Test slow/malformed peers, repeated connections, network loss, and interface changes within safe limits.
-
-### Future Windows work
-Treat Windows as a separate revamp rather than claiming cross-platform parity prematurely.
-
----
-
-## 16. Final Milestone Assessment
-
-Milestone 3 has progressed from an unauthenticated prototype to a substantially hardened and experimentally validated Linux ↔ Android Wi-Fi architecture.
-
-The most significant achievement is that the security changes were not only implemented but exercised on a **real Android device over a real Wi-Fi connection**, including successful mutual authentication and runtime observation of encrypted control traffic.
-
-The remaining work is primarily refinement and media-plane hardening rather than a return to the original insecure architecture.
-
-**Status: M3 security/integration work substantially complete for the current review scope, with explicitly documented residual work.**
-
----
-
-## Evidence References
-
-- `M3_SECURITY_AUDIT.md` — original findings, historical runtime evidence, and remediation record.
-- `M3_SECURITY_REMEDIATION_REPORT.pdf` — remediation/build/integration evidence and remaining-work record.
-- Linux control protocol implementation.
-- Linux FFmpeg/FFprobe process runners.
-- Android control protocol implementation and tests.
-- Physical-device Wi-Fi integration logs and packet capture.
+| Parameter | Current value |
+|---|---|
+| Control protocol | OCAM v2 |
+| Pairing secret | 256-bit random |
+| Control encryption | AES-256-GCM |
+| KDF | HKDF-SHA256 |
+| Control key size | 256-bit |
+| GCM tag | 128-bit |
+| Max control payload | 64 KiB |
+| Control transport | TCP / IPv4 |
+| Control port | 6969 |
+| RTSP port | 8554 |
+| Media transport | RTSP over TCP |
+| Video codec | H.264 |
+| Validated video size | 640×480 |
+| Virtual camera | `/dev/video2` during validation |
+| FFmpeg | External child process |
+| FFmpeg diagnostics | Bounded stderr capture |
+| Media TLS | Not currently implemented |
+| Forward secrecy | Not currently implemented |
