@@ -1,6 +1,6 @@
 #include "control_protocol.hpp"
 #include "device_descriptor.hpp"
-#include "ffmpeg_runner.hpp"
+#include "media_pipeline.hpp"
 #include "network.hpp"
 #include "qr.hpp"
 #include "rtsp_probe.hpp"
@@ -20,7 +20,6 @@
 #include <poll.h>
 #include <string>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -223,99 +222,43 @@ namespace
         }
 
         std::cout
-            << "Activation sent; starting RTSP readiness check.\n";
+            << "Activation sent; checking RTSP readiness.\n";
 
         if (!waitForRtsp(authenticatedRtspUrl))
+        {
+            std::cerr << "RTSP source did not become ready.\n";
             return false;
+        }
 
-        FfmpegProcess ffmpegProcess =
-            startFfmpeg(
-                authenticatedRtspUrl,
-                virtualCamera);
-
-        if (ffmpegProcess.pid < 0)
+        MediaPipeline mediaPipeline;
+        if (!mediaPipeline.start(authenticatedRtspUrl, virtualCamera))
+        {
+            std::cerr << "Could not start in-process media worker.\n";
             return false;
+        }
 
         std::cout
-            << "FFmpeg started (PID "
-            << ffmpegProcess.pid
-            << ").\n";
+            << "In-process media worker started; credentials are not passed "
+               "through process arguments.\n";
 
-        bool childExited = false;
         bool connected = true;
+        bool mediaFailureReported = false;
 
         while (connected)
         {
-            /*
-             * Drain FFmpeg stderr first so its non-blocking
-             * diagnostic pipe cannot fill and stall FFmpeg.
-             */
-            const std::string diagnostics =
-                drainFfmpegStderr(ffmpegProcess);
-
-            if (!diagnostics.empty())
+            const MediaPipelineState mediaState = mediaPipeline.state();
+            if (mediaState == MediaPipelineState::Failed ||
+                mediaState == MediaPipelineState::Stopped)
             {
-                std::cerr
-                    << "FFmpeg diagnostics:\n"
-                    << diagnostics;
-
-                if (diagnostics.back() != '\n')
-                    std::cerr << '\n';
-            }
-
-            int childStatus = 0;
-
-            const pid_t childResult =
-                waitpid(
-                    ffmpegProcess.pid,
-                    &childStatus,
-                    WNOHANG);
-
-            if (childResult == ffmpegProcess.pid ||
-                (childResult < 0 && errno == ECHILD))
-            {
-                childExited = true;
-
-                /*
-                 * Drain any diagnostics written immediately
-                 * before process termination.
-                 */
-                const std::string finalDiagnostics =
-                    drainFfmpegStderr(ffmpegProcess);
-
-                if (!finalDiagnostics.empty())
+                if (!mediaFailureReported)
                 {
-                    std::cerr
-                        << "FFmpeg diagnostics:\n"
-                        << finalDiagnostics;
-
-                    if (finalDiagnostics.back() != '\n')
-                        std::cerr << '\n';
+                    const std::string error = mediaPipeline.errorMessage();
+                    std::cerr << "Media pipeline stopped";
+                    if (!error.empty())
+                        std::cerr << ": " << error;
+                    std::cerr << ". Ending authenticated session.\n";
+                    mediaFailureReported = true;
                 }
-
-                if (childResult == ffmpegProcess.pid &&
-                    WIFEXITED(childStatus))
-                {
-                    std::cerr
-                        << "FFmpeg exited with status "
-                        << WEXITSTATUS(childStatus)
-                        << "; ending authenticated session.\n";
-                }
-                else if (childResult == ffmpegProcess.pid &&
-                         WIFSIGNALED(childStatus))
-                {
-                    std::cerr
-                        << "FFmpeg terminated by signal "
-                        << WTERMSIG(childStatus)
-                        << "; ending authenticated session.\n";
-                }
-                else
-                {
-                    std::cerr
-                        << "FFmpeg child status unavailable; "
-                           "ending authenticated session.\n";
-                }
-
                 break;
             }
 
@@ -324,57 +267,38 @@ namespace
                 POLLIN,
                 0};
 
-            const int ready =
-                poll(
-                    &descriptorPoll,
-                    1,
-                    250);
+            const int ready = poll(&descriptorPoll, 1, 250);
 
             if (ready < 0)
             {
                 if (errno == EINTR)
                     continue;
-
                 break;
             }
 
             if (ready == 0)
                 continue;
 
-            if (descriptorPoll.revents &
-                (POLLERR | POLLHUP | POLLNVAL))
-            {
+            if (descriptorPoll.revents & (POLLERR | POLLHUP | POLLNVAL))
                 break;
-            }
 
             Frame incoming{};
 
-            if (!channel.receive(
-                    incoming,
-                    2000) ||
+            if (!channel.receive(incoming, 2000) ||
                 incoming.type != Type::ERROR_REPORT)
             {
                 std::cerr
                     << "Invalid authenticated control frame; "
                        "closing session.\n";
-
                 break;
             }
 
-            // Error text is peer-controlled.
-            // Do not echo it into terminal logs.
+            // Error text is peer-controlled; never echo it into terminal logs.
             std::cerr
-                << "Authenticated Android client "
-                   "reported an error.\n";
+                << "Authenticated Android client reported an error.\n";
         }
 
-        if (!childExited &&
-            !stopFfmpeg(ffmpegProcess))
-        {
-            std::cerr
-                << "FFmpeg required forced cleanup.\n";
-        }
-
+        mediaPipeline.stop();
         return true;
     }
 

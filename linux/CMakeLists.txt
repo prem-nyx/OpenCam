@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(opencam
-    VERSION 0.1.0
-    LANGUAGES CXX
-)
-
+project(opencam VERSION 0.1.0 LANGUAGES CXX)
 find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+    libavformat libavcodec libavutil libswscale)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,14 +16,14 @@ add_executable(opencam
     src/device_descriptor.cpp
     src/stream_options.cpp
     src/security_validation.cpp
-    src/ffmpeg_runner.cpp
+    src/diagnostic_redaction.cpp
+    src/media_pipeline.cpp
     src/rtsp_probe.cpp
     src/v4l2_device.cpp
     src/network.cpp
     src/qr.cpp
 )
-
-target_link_libraries(opencam PRIVATE OpenSSL::Crypto)
+target_link_libraries(opencam PRIVATE OpenSSL::Crypto PkgConfig::FFMPEG pthread)
 target_compile_options(opencam PRIVATE -Wall -Wextra -Wpedantic)
 
 include(CTest)
@@ -44,7 +43,14 @@ if(BUILD_TESTING)
         src/rtsp_probe.cpp
     )
     target_include_directories(opencam_shell_injection_regression PRIVATE src)
-    add_test(NAME opencam_shell_injection_regression
-             COMMAND opencam_shell_injection_regression)
+    target_link_libraries(opencam_shell_injection_regression PRIVATE PkgConfig::FFMPEG pthread)
+    add_test(NAME opencam_shell_injection_regression COMMAND opencam_shell_injection_regression)
     set_tests_properties(opencam_shell_injection_regression PROPERTIES TIMEOUT 60)
+
+    add_executable(opencam_diagnostic_redaction_tests
+        tests/diagnostic_redaction_tests.cpp
+        src/diagnostic_redaction.cpp
+    )
+    target_include_directories(opencam_diagnostic_redaction_tests PRIVATE src)
+    add_test(NAME opencam_diagnostic_redaction_tests COMMAND opencam_diagnostic_redaction_tests)
 endif()
