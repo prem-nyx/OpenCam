@@ -183,55 +183,46 @@ hosts or ports.
 
 ---
 
-## 💻 Shell-Injection Remediation
+## 💻 Media Pipeline and Process-Execution Remediation
 
-An earlier implementation invoked external RTSP probing through a shell,
-allowing peer-controlled RTSP URL data to reach `std::system()`.
+The earlier media implementation passed an authenticated RTSP URL to external
+FFmpeg/FFprobe processes. That design created two distinct concerns: shell
+interpretation in the old probe path, and credential visibility in process
+arguments when a URL containing userinfo was passed to a media subprocess.
 
-This was identified as a high-severity issue during the M3 security audit.
+The current implementation replaces the RTSP probe and video-processing
+subprocesses with **in-process FFmpeg library calls**:
 
-The current implementation uses direct `fork()` / `exec()` argument passing
-for FFprobe instead of shell command construction.
+- RTSP readiness probing uses `libavformat`.
+- The media worker opens the authenticated RTSP URL in process memory.
+- Video is decoded with `libavcodec`, converted with `libswscale`, and written
+  to the V4L2 loopback device.
+- The media worker runs in a dedicated thread so the control loop can continue
+  handling the authenticated control connection.
+- The media URL is not passed as an FFmpeg/FFprobe command-line argument.
 
-FFmpeg is likewise launched through direct process execution.
+The previous media subprocess command-line exposure path is therefore removed
+from the active pipeline. This does not encrypt RTSP traffic or eliminate every
+possible way sensitive data could be exposed from process memory.
 
-This prevents RTSP URL metacharacters from being interpreted as shell syntax.
-
----
-
-## 🧰 FFmpeg Process Isolation
-
-The Linux controller launches FFmpeg as a separate child process.
-
-Current hardening includes:
-
-- direct `exec()` invocation
-- close-on-exec handling
-- closing inherited file descriptors
-- controlled stdin/stdout/stderr handling
-- bounded process shutdown
-- SIGTERM followed by SIGKILL if required
-- explicit child reaping
-
-Real-device testing also verified that the FFmpeg RTSP socket is a
-separate socket from OpenCam's control listener.
+Unrelated process-launch paths remain in the project. The QR display path
+invokes `qrencode` with fixed arguments and sends the QR payload over stdin;
+the V4L2 loopback loader uses a fixed `modprobe` command. Neither path receives
+the authenticated RTSP URL. Those paths should still be reviewed independently
+as part of future process-execution hardening.
 
 ---
 
 ## 📝 Diagnostics and Logging
 
-FFmpeg stderr is captured through a bounded non-blocking diagnostic pipe.
+The in-process media pipeline suppresses FFmpeg library log output to avoid
+emitting URL-bearing diagnostic messages. OpenCam reports generic media
+pipeline failures rather than echoing peer-provided error text.
 
-Diagnostic output is capped to prevent unbounded accumulation.
-
-OpenCam's normal textual logging does not intentionally print:
-
-- pairing secrets
-- RTSP passwords
-- authenticated URLs
-
-However, the current FFmpeg command-line media pipeline has an important
-credential-exposure limitation described below.
+The project also includes diagnostic-redaction code and automated tests for
+sensitive diagnostic strings. These controls reduce accidental disclosure in
+normal logs; they are not a guarantee against exposure through debugging,
+crash dumps, process-memory inspection, or other host-level access.
 
 ---
 
@@ -255,28 +246,21 @@ RTSPS/media-plane encryption remains future work.
 
 ---
 
-### 2. RTSP Credential Exposure in FFmpeg
+### 2. RTSP Credential Handling
 
-The Linux media pipeline currently constructs an authenticated RTSP URL
-containing the media credential before invoking FFmpeg.
+The previous FFmpeg CLI media pipeline placed the authenticated RTSP URL in
+the FFmpeg process argument list, making the media credential visible through
+`/proc/<pid>/cmdline` and potentially through FFmpeg diagnostics.
 
-As a consequence, the credential can be visible in:
+The current in-process pipeline removes that specific command-line exposure
+path: neither the RTSP probe nor the media decoder is launched as an FFmpeg or
+FFprobe subprocess, and FFmpeg library logging is suppressed.
 
-```text
-/proc/<ffmpeg-pid>/cmdline
-```
-
-FFmpeg may also reproduce the URL in diagnostic stderr when an RTSP
-connection fails.
-
-OpenCam's diagnostic handling should therefore not be considered a
-complete solution to this issue.
-
-A future credential-safe media pipeline is required to remove this
-command-line exposure. One possible architectural direction is replacing
-the credential-bearing FFmpeg CLI invocation with an in-process media
-pipeline or another mechanism that does not place credentials in process
-arguments.
+The authenticated URL and derived media credential still exist in process
+memory while streaming. The RTSP media plane also remains unencrypted by
+TLS/RTSPS. Accordingly, this change should be described as remediation of the
+**credential-in-subprocess-arguments issue**, not as complete media-plane
+confidentiality or a guarantee against all host-level credential exposure.
 
 ---
 
@@ -384,6 +368,25 @@ data.
 
 ---
 
+## 🧪 Latest M3 Media-Pipeline Verification
+
+The updated in-process media pipeline was built and exercised on the development
+Linux host with a real Android client. The developer reported that the stream
+ran for several minutes without issues, stream restart was smooth, all three
+registered Linux CTest tests passed on rerun, and disconnect/shutdown checks
+were clean.
+
+The active process inspection showed OpenCam running without a separate
+FFmpeg or FFprobe process. Source inspection confirmed that
+`linux/CMakeLists.txt` includes `src/media_pipeline.cpp` and does not compile
+`src/ffmpeg_runner.cpp`.
+
+These checks support the remediation of the specific credential-in-process-
+arguments issue. They are not a comprehensive independent security audit, and
+RTSP media-plane TLS remains unimplemented.
+
+---
+
 ## 📊 Current Security Status
 
 | Area | Status |
@@ -397,12 +400,12 @@ data.
 | Protocol bounds and validation | 🟢 Implemented |
 | RTSP endpoint validation | 🟢 Implemented |
 | Shell-injection remediation | 🟢 Implemented |
-| FFmpeg process isolation | 🟢 Implemented |
-| FFmpeg diagnostic capture | 🟢 Implemented |
+| In-process FFmpeg media pipeline | 🟢 Implemented and live-tested |
+| FFmpeg library log suppression and generic errors | 🟢 Implemented |
 | Real-device Wi-Fi validation | 🟢 Implemented |
 | RTSP media authentication | 🟡 Partial |
 | RTSP media encryption / RTSPS | 🔴 Not implemented |
-| FFmpeg credential exposure | 🟡 Known limitation |
+| RTSP credential in FFmpeg subprocess argv | 🟢 Specific exposure path removed |
 | Forward secrecy | 🔴 Not implemented |
 | Multi-interface edge cases | 🟡 Ongoing |
 | Repeated-connection/resource hardening | 🟡 Ongoing |
@@ -440,7 +443,7 @@ TLS/RTSPS encryption.
 Planned security improvements include:
 
 - RTSPS/TLS support for the media plane
-- removal of media credentials from process command lines
+- review of residual in-memory credential exposure and host-level threat scenarios
 - stronger resource-exhaustion defenses
 - broader malformed-peer testing
 - multi-interface/network topology testing

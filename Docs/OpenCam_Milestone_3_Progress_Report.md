@@ -1,6 +1,6 @@
 # OpenCam — Milestone 3 Progress Report
 
-**Date:** 28 September 2026  
+**Date:** 15 October 2026  
 **Milestone:** M3 — Pairing, Network Security & Security Hardening  
 **Scope:** Linux controller ↔ Android client over Wi-Fi
 
@@ -24,9 +24,9 @@ The work covered:
 - directional session keys
 - strict frame sequencing and replay/reordering protection
 - RTSP endpoint validation
-- FFmpeg process isolation
-- file-descriptor isolation
-- bounded FFmpeg diagnostics
+- in-process FFmpeg library media pipeline
+- removal of FFmpeg/FFprobe subprocess command-line credential exposure
+- bounded protocol handling and generic media error reporting
 - Android protocol and validation hardening
 - real-device Wi-Fi integration
 - end-to-end RTSP → FFmpeg → V4L2 validation
@@ -36,9 +36,12 @@ The work covered:
 The current M3 implementation is **substantially complete for the
 Linux ↔ Android Wi-Fi control-plane scope**.
 
-The major remaining security limitation is that the RTSP media plane is
-not currently protected by TLS/RTSPS. There is also a known credential
-exposure issue caused by the current FFmpeg command-line media pipeline.
+The major remaining media security limitation is that the RTSP media plane
+is not currently protected by TLS/RTSPS. The previously identified exposure
+of the authenticated RTSP URL through FFmpeg subprocess arguments has been
+remediated by replacing the probe and media subprocesses with in-process
+FFmpeg library calls. Residual in-memory credential exposure remains outside
+the scope of that specific fix.
 
 ---
 
@@ -308,116 +311,109 @@ The stream path is randomized per streaming session.
 
 ---
 
-# 12. Shell-Injection Remediation
+# 12. Media Pipeline and Process-Execution Remediation
 
-The earlier implementation used `std::system()` for RTSP probing.
+The earlier RTSP probe used shell-mediated execution, allowing peer-controlled
+RTSP URL data to reach a shell command. The probe was first changed away from
+shell command construction, and the latest media-pipeline migration removes the
+FFmpeg/FFprobe subprocesses from the active RTSP path entirely.
 
-Because the RTSP URL originated from peer-controlled data, this created a
-shell-injection risk.
+The current implementation uses FFmpeg libraries in process:
 
-The RTSP probe was redesigned to use direct process execution:
+- `libavformat` opens and probes the RTSP stream.
+- `libavcodec` decodes video frames.
+- `libswscale` converts frames to the V4L2-compatible YUV420 format.
+- A dedicated media worker writes frames to the V4L2 loopback device.
 
-```text
-fork()
-  ↓
-exec()
-  ↓
-ffprobe
-```
+The authenticated RTSP URL is held in process memory and is not passed as an
+FFmpeg/FFprobe command-line argument. This removes the previously identified
+credential exposure through `/proc/<ffmpeg-pid>/cmdline` for the active media
+pipeline.
 
-The URL is passed as an argument rather than embedded inside a shell
-command.
-
-This removes shell interpretation from the RTSP probing path.
-
-The FFmpeg runner uses the same direct process-execution approach.
-
----
-
-# 13. FFmpeg Process Isolation
-
-FFmpeg is launched as a child process of the OpenCam Linux controller.
-
-The process-launch path now includes:
-
-- direct `exec()` invocation
-- close-on-exec handling
-- closing inherited file descriptors
-- controlled stdin/stdout/stderr
-- bounded shutdown
-- SIGTERM followed by SIGKILL when required
-- explicit process reaping
-
-A real-device process inspection was performed during streaming.
-
-The resulting process relationship was:
-
-```text
-OpenCam
-   └── ffmpeg
-```
-
-The FFmpeg RTSP socket was confirmed to be separate from the OpenCam
-control listener.
-
-The OpenCam control listener remained owned by the OpenCam process,
-while FFmpeg owned its own RTSP connection socket.
-
-After normal shutdown, the FFmpeg process and associated sockets were
-confirmed to be gone.
-
-This provides runtime evidence for both process isolation and normal
-lifecycle cleanup.
+Unrelated process-execution paths remain: the QR display code launches
+`qrencode` with fixed arguments and supplies the payload through stdin, while
+the V4L2 loopback loader runs a fixed `modprobe` command. Neither receives the
+authenticated RTSP URL; they remain separate process-hardening considerations.
 
 ---
 
-# 14. FFmpeg Diagnostics
+# 13. In-Process Media Pipeline and Lifecycle
 
-FFmpeg stderr is now captured through a bounded non-blocking diagnostic
-pipe.
+The Linux controller now performs RTSP probing and media decoding through
+in-process FFmpeg libraries rather than a separate FFmpeg child process.
 
-Current diagnostic handling includes:
+The media worker:
 
-- non-blocking reads
-- bounded diagnostic storage
-- an 8192-byte diagnostic limit
-- process cleanup
-- stderr capture for connection and media failures
+- opens the authenticated RTSP endpoint using FFmpeg libraries
+- locates and decodes the video stream
+- converts frames to YUV420 at the pipeline's configured output size
+- writes frames to the V4L2 loopback device
+- runs separately from the control loop so control messages can continue to
+  be handled during streaming
+- uses a stop/interrupt path so shutdown can terminate media work
 
-A deterministic failing-connection test successfully produced useful
-FFmpeg diagnostics instead of silently hiding the underlying failure.
+The developer verified the new executable with a real Android stream. The
+stream ran for several minutes without reported issues, restarting the stream
+was smooth, and the disconnect/shutdown check was reported clean.
 
-This significantly improves troubleshooting of RTSP and V4L2 failures.
+The previous process tree containing a separate FFmpeg media child no longer
+applies to this architecture. A process inspection during the current
+verification showed the OpenCam executable without a separate FFmpeg or
+FFprobe process.
 
 ---
 
-# 15. Credential Exposure Investigation
+---
 
-During the M3 security review, the actual FFmpeg process was inspected.
+# 14. Media Diagnostics and Error Handling
 
-The RTSP credential was found to be present in:
+The in-process pipeline suppresses FFmpeg library log output to avoid
+accidentally printing authenticated URL contents. Media failures are surfaced
+through generic application-level errors rather than echoing peer-provided
+error text.
 
-```text
-/proc/<ffmpeg-pid>/cmdline
-```
+The project also includes diagnostic-redaction code and an automated test
+target for it. These measures reduce accidental disclosure through normal
+diagnostics; they do not prevent exposure through process memory, debugging,
+crash dumps, or other host-level access.
 
-A deterministic test also demonstrated that when an RTSP URL containing
-a test credential was supplied to FFmpeg, the credential could appear
-verbatim in FFmpeg stderr.
+---
 
-For example, the diagnostic path reproduced the supplied test credential
-inside the FFmpeg error message.
+# 15. RTSP Credential Exposure Remediation
 
-### Current assessment
+The previous FFmpeg CLI pipeline included the authenticated RTSP URL in the
+child process argument list. That made the credential inspectable through
+`/proc/<ffmpeg-pid>/cmdline`; FFmpeg diagnostics could also reproduce the URL.
 
-This is a known security limitation of the current media architecture.
+The current in-process media pipeline removes that specific exposure path:
 
-The control-plane authentication and encryption are not weakened by this
-finding, but the media credential itself can be exposed through the
-FFmpeg CLI process representation.
+- RTSP probing uses `libavformat` in process.
+- Video processing uses `libavformat`, `libavcodec`, and `libswscale` in process.
+- No FFmpeg or FFprobe subprocess is used for the active media pipeline.
+- The authenticated URL is not passed in a media-process argument list.
+- FFmpeg library log output is suppressed.
 
-A complete fix likely requires a credential-safe media integration that
-does not place the RTSP password in the process command line.
+### Verification performed
+
+- A clean Linux build succeeded.
+- All three registered Linux CTest tests passed on rerun:
+  `opencam_security_tests`, `opencam_shell_injection_regression`, and
+  `opencam_diagnostic_redaction_tests`.
+- The real Android-to-Linux stream ran for several minutes without reported
+  issues.
+- Stream restart was reported smooth.
+- The developer reported disconnect/shutdown checks were clean.
+- Process inspection showed OpenCam without a separate FFmpeg/FFprobe process.
+
+### Scope of the fix
+
+This remediates the specific **credential exposure through FFmpeg/FFprobe
+subprocess arguments**. The URL and derived credential still exist in OpenCam's
+memory while streaming, and this change does not provide TLS/RTSPS encryption
+for the RTSP media plane. It should not be represented as complete media
+confidentiality or a full security audit.
+
+---
 
 ---
 
@@ -426,7 +422,7 @@ does not place the RTSP password in the process command line.
 The updated implementation was tested using an actual Android device
 and Linux host over Wi-Fi.
 
-The verified sequence was:
+The verified sequence for the earlier subprocess-based implementation was:
 
 ```text
 Wi-Fi mode selected
@@ -502,9 +498,10 @@ media pipeline:
 ```text
 Android camera
       ↓
-RTSP
+RTSP over TCP
       ↓
-FFmpeg
+In-process FFmpeg libraries
+(libavformat + libavcodec + libswscale)
       ↓
 V4L2 loopback
       ↓
@@ -531,29 +528,32 @@ YUV420
 to `/dev/video2`.
 
 The actual Android camera stream was subsequently validated through the
-same FFmpeg → V4L2 path.
+in-process FFmpeg libraries → V4L2 path. The developer later confirmed that
+the replacement pipeline remained stable for several minutes and restarted
+smoothly.
 
 ---
 
-# 19. FFmpeg/V4L2 Troubleshooting
+# 19. Media-Pipeline Integration and Troubleshooting
 
-During real-device integration, FFmpeg initially failed with a non-zero
-status.
+During integration, the media implementation was migrated from an external
+FFmpeg process to in-process FFmpeg libraries. A first build attempt encountered
+linker errors because the build referenced stale/inconsistent object state;
+a clean rebuild succeeded without source changes, and the subsequent test run
+passed.
 
-The failure investigation included:
+The real Android camera stream was then tested with the new in-process
+pipeline. The developer reported:
 
-- exposing FFmpeg stderr
-- validating the RTSP endpoint independently
-- testing the V4L2 device
-- verifying supported pixel formats
-- checking installed FFmpeg/FFprobe capabilities
-- testing a synthetic V4L2 source
-- correcting the FFmpeg invocation
+- live video reached `/dev/video2`
+- the stream ran for several minutes without reported problems
+- restarting the stream was smooth
+- disconnect/shutdown behavior was clean
 
-A separate test also confirmed that an intentionally invalid RTSP
-endpoint produced a clear connection-refused diagnostic.
+These are developer-observed integration results, not a claim that every
+network, device, or resource-exhaustion edge case has been tested.
 
-The final pipeline successfully reached the virtual camera.
+---
 
 ---
 
@@ -573,11 +573,20 @@ Validated areas include:
 - shell-metacharacter handling
 - media credential derivation
 
-The Linux CTest suite completed successfully:
+The updated Linux CTest suite completed successfully on rerun:
 
 ```text
-2/2 tests passed
+3/3 tests passed
 ```
+
+The registered tests were:
+
+- `opencam_security_tests`
+- `opencam_shell_injection_regression`
+- `opencam_diagnostic_redaction_tests`
+
+The clean build and test rerun were completed after the in-process media
+pipeline changes.
 
 ---
 
@@ -603,6 +612,30 @@ The Android test suite completed successfully after the v2 migration.
 
 ---
 
+# 20A. Latest Post-Migration Verification
+
+After the in-process media pipeline was integrated, the developer reported
+that a clean build succeeded and the three registered Linux tests passed.
+Real-device verification then confirmed that live video worked, the stream
+remained stable for several minutes, stream restart was smooth, and
+disconnect/shutdown checks were clean.
+
+A second-terminal CTest run passed while the OpenCam session was running.
+Process inspection showed only the OpenCam executable, with no separate
+FFmpeg or FFprobe process. Source inspection confirmed that the CMake target
+includes `src/media_pipeline.cpp` and does not compile `src/ffmpeg_runner.cpp`.
+
+The developer committed and pushed the change as:
+
+```text
+81eb515 Fix RTSP credential exposure in media pipeline
+```
+
+This is the commit identifier reported by the developer; the report does not
+independently query GitHub to verify the remote commit.
+
+---
+
 # 21. Current M3 Status
 
 | Area | Status |
@@ -620,9 +653,9 @@ The Android test suite completed successfully after the v2 migration.
 | Linux/Android automated tests | 🟢 Done |
 | Real-device Wi-Fi integration | 🟢 Done |
 | Encrypted traffic runtime verification | 🟢 Done |
-| FFmpeg process isolation | 🟢 Done |
-| FFmpeg diagnostic capture | 🟢 Done |
-| FFmpeg credential exposure | 🟡 Known limitation |
+| In-process FFmpeg media pipeline | 🟢 Done and live-tested |
+| FFmpeg log suppression and generic media errors | 🟢 Done |
+| RTSP credential in FFmpeg subprocess argv | 🟢 Specific exposure path removed |
 | RTSP authentication | 🟡 Partial |
 | RTSP media encryption / RTSPS | 🔴 Not implemented |
 | Forward secrecy | 🔴 Not implemented |
@@ -634,7 +667,7 @@ The Android test suite completed successfully after the v2 migration.
 
 # 22. Remaining M3 Work
 
-The following items remain before M3 can be considered fully closed:
+The following items remain before M3 can be considered fully closed. The credential exposure through FFmpeg subprocess arguments has been addressed by the in-process migration; media-plane TLS and broader hardening remain open:
 
 ### Media-plane encryption
 
@@ -643,12 +676,12 @@ server-side TLS/RTSPS functionality required by OpenCam.
 
 Therefore the RTSP media plane remains unencrypted.
 
-### Credential-safe media process
+### Residual credential handling
 
-The current FFmpeg CLI invocation places the RTSP credential in the
-process argument list.
-
-A future media integration should remove this exposure.
+The in-process migration removes the credential from FFmpeg/FFprobe command-line
+arguments. The authenticated URL still exists in process memory while streaming,
+so host-level access, debugging, and crash-dump handling remain relevant. This
+specific fix does not replace a broader secrets-handling review.
 
 ### Resource and hostile-peer testing
 
@@ -680,8 +713,9 @@ The accurate security claim is:
 > OpenCam provides QR-based pairing, mutual authentication, AES-256-GCM
 > encrypted control communication, validated RTSP endpoints, hardened
 > process execution, and a tested Linux ↔ Android Wi-Fi integration.
-> The RTSP media plane is not currently TLS-encrypted, and the current
-> FFmpeg media pipeline has a known credential-exposure limitation.
+> The RTSP media plane is not currently TLS-encrypted. The previous
+> FFmpeg subprocess-argument credential exposure has been remediated, but
+> residual in-memory credential exposure and other hardening work remain.
 
 This distinction is important:
 
@@ -737,8 +771,8 @@ The most significant completed security improvements are:
 11. **Runtime verification of encrypted control traffic**
 
 The remaining limitations are clearly identified rather than hidden,
-with media-plane encryption and credential-safe FFmpeg integration being
-the most significant outstanding security tasks.
+with media-plane encryption, residual secrets-handling review, and broader
+resource/network hardening being the most significant outstanding tasks.
 
 ---
 
@@ -750,10 +784,10 @@ summarized as:
 > **OpenCam is a Linux–Android webcam streaming system with QR-based
 > pairing, mutually authenticated control communication, AES-256-GCM
 > encrypted control frames, validated RTSP endpoints, hardened FFmpeg
-> process execution, and a V4L2 virtual-camera output path. Milestone 3
-> focused on security hardening and real-device Wi-Fi integration.
-> Media-plane TLS encryption and several cross-platform/network edge
-> cases remain future work.**
+> an in-process FFmpeg media pipeline, and a V4L2 virtual-camera output path.
+> Milestone 3 focused on security hardening and real-device Wi-Fi integration.
+> Media-plane TLS encryption and several cross-platform/network edge cases
+> remain future work.**
 
 ---
 
@@ -775,7 +809,7 @@ summarized as:
 | Video codec | H.264 |
 | Validated video size | 640×480 |
 | Virtual camera | `/dev/video2` during validation |
-| FFmpeg | External child process |
-| FFmpeg diagnostics | Bounded stderr capture |
+| FFmpeg media integration | In-process libavformat/libavcodec/libswscale |
+| FFmpeg diagnostics | Library logging suppressed; generic media errors |
 | Media TLS | Not currently implemented |
 | Forward secrecy | Not currently implemented |
