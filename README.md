@@ -1,339 +1,161 @@
-<div align="center">
-
 # OpenCam
 
-### Turn your Android phone into a camera for your computer.
+**Use an Android phone as a camera for a Linux computer.**
 
-[![Development Status](https://img.shields.io/badge/status-active%20development-orange.svg)](#-current-status)
-[![GitHub Stars](https://img.shields.io/github/stars/prem-nyx/OpenCam?style=flat&logo=github)](https://github.com/prem-nyx/OpenCam/stargazers)
+OpenCam is an open-source project that streams video from an Android
+device to a Linux computer over a local network. The Linux controller
+receives the stream and exposes it as a V4L2 virtual camera, allowing
+compatible applications such as OBS to use the phone as a camera source.
 
-</div>
+> **Project status:** Active development. The validated target is
+> Android and Linux over Wi-Fi. OpenCam is not yet a production-ready
+> secure communications system.
 
----
+## Features
 
-## 📷 What is OpenCam?
+-   QR-based pairing between the Android client and Linux controller
+-   Mutually authenticated control sessions
+-   AES-256-GCM encryption for control messages
+-   HKDF-SHA256 session-key derivation with separate directional keys
+-   Sequence validation to reject replayed, duplicated, or out-of-order
+    control frames
+-   RTSP video transport from Android to Linux
+-   In-process FFmpeg libraries for RTSP probing, decoding, and pixel
+    conversion
+-   V4L2 loopback output for Linux camera applications
+-   RTSP endpoint validation and bounded control-protocol parsing
 
-OpenCam is an open-source project that turns Android devices into cameras
-for computers over a local network.
+## How it works
 
-The current implementation focuses on **Linux + Android**, providing:
-
-- QR-based device pairing
-- Authenticated control communication
-- Encrypted control frames
-- RTSP video streaming
-- FFmpeg-based video bridging
-- V4L2 virtual-camera output
-
-Future development will extend OpenCam toward microphone streaming,
-A/V synchronization, additional transports, and broader platform support.
-
----
-
-## 🚧 Current Status
-
-OpenCam is under active development.
-
-| Milestone | Status |
-|---|---|
-| M1 - Android → Linux video pipeline | ✅ Complete |
-| M2 - Linux controller | ✅ Complete |
-| M3 - Pairing & network security | 🟢 Substantially complete |
-| M4 - Resolution & performance | 📋 Planned |
-| M5 - USB / ADB transport | 📋 Planned |
-| M6 - Audio & A/V synchronization | 📋 Planned |
-| M7 - Android UI & OpenCam rebrand | 🚧 In progress |
-| M8 - Windows implementation | 📋 Planned |
-| M9 - Packaging & release | 📋 Planned |
-
-> **Current validated scope:** Linux ↔ Android over Wi-Fi.
-> Other platforms and transports remain future work.
-
----
-
-## 🧩 Current Implementation
-
-| Component | Current implementation |
-|---|---|
-| Platform | Linux + Android |
-| Network transport | Wi-Fi / TCP |
-| Device pairing | QR-based |
-| Control authentication | Mutual authentication |
-| Control encryption | AES-256-GCM |
-| Key derivation | HKDF-SHA256 |
-| Media transport | RTSP over TCP |
-| Video codec | H.264 |
-| Linux output | V4L2 virtual camera |
-| Validated resolution | 640×480 |
-| Camera consumers | OBS, browsers, and other V4L2 applications |
-
-The control and media channels are separate.
-
-The current control plane is authenticated and encrypted. The RTSP media
-plane does not yet provide TLS/RTSPS encryption.
-
-For the detailed security architecture, validation results, and known
-limitations, see [`SECURITY.md`](SECURITY.md).
-
----
-
-## 🗺️ How It Works
-
-The current Linux implementation uses the following pipeline:
-
-```text
-┌──────────────────┐
-│   Android Phone  │
-│     OpenCam      │
-└────────┬─────────┘
-         │
-         │ RTSP
-         ▼
-┌──────────────────┐
-│ Linux Controller │
-│     OpenCam      │
-└────────┬─────────┘
-         │
-         │ FFmpeg
-         ▼
-┌──────────────────┐
-│  V4L2 Loopback   │
-│   /dev/videoX    │
-└────────┬─────────┘
-         │
-         ▼
-┌───────────────────┐
-│ OBS / Browser /   │
-│ Other Applications│
-└───────────────────┘
+``` text
+Android phone
+  ├── Authenticated, encrypted control channel ──> OpenCam Linux controller
+  └── RTSP video stream ─────────────────────────> OpenCam Linux controller
+                                                      │
+                                                      ▼
+                                             FFmpeg libraries
+                                                      │
+                                                      ▼
+                                                V4L2 loopback
+                                                      │
+                                                      ▼
+                                               OBS / other apps
 ```
 
-The Android device is paired and controlled through a TCP connection.
-The camera stream is delivered through RTSP, received by the Linux
-controller, and bridged into a V4L2 virtual camera using FFmpeg.
+The control and media paths are separate. The control channel is
+authenticated and encrypted. The RTSP media path currently uses
+`rtsp://` and is **not encrypted with TLS**.
 
----
+## Current implementation
 
-## 🔐 Security
+  Component              Current implementation
+  ---------------------- --------------------------------------
+  Client                 Android
+  Controller             Linux
+  Network                Wi-Fi / TCP
+  Pairing                QR-delivered, random pairing secret
+  Control protocol       OCAM v2
+  Control encryption     AES-256-GCM
+  Key derivation         HKDF-SHA256
+  Media transport        RTSP over TCP
+  Video output           V4L2 loopback
+  Video codec tested     H.264
+  Resolution validated   640 × 480
+  Consumers              OBS and compatible V4L2 applications
 
-OpenCam's current security work focuses on authenticated device pairing,
-encrypted control communication, input validation, and safer media
-processing.
+Resolution, latency, and compatibility can vary with the device,
+network, codec configuration, and host system.
 
-### Implemented protections
+## Security
 
-The Linux ↔ Android control channel includes:
+OpenCam's current security work includes mutual authentication,
+encrypted control frames, protocol bounds and validation, RTSP endpoint
+validation, and removal of the FFmpeg subprocess-argument path for media
+URLs.
 
-- QR-based pairing with a random pairing secret
-- Mutual authentication
-- AES-256-GCM encrypted control frames
-- HKDF-SHA256 key derivation with directional session keys
-- Sequence-based replay and reordering protection
-- Bounded protocol parsing and connection timeouts
-- RTSP endpoint validation
-- In-process FFmpeg library calls for media probing and decoding
-- Generic media errors and reduced diagnostic exposure
+The Android RTSP server fork also includes RTSP Basic-authentication
+hardening and unit tests. Basic authentication is not encryption, and it
+does not protect media confidentiality on its own.
 
-The Android RTSP server fork also contains authentication hardening
-that requires Basic authentication for supported RTSP request methods.
+**Known limitations** - RTSP media is not yet protected by RTSPS/TLS. -
+The control protocol does not currently provide forward secrecy. - The
+media URL and derived credential remain present in process memory while
+streaming. - Additional resource-exhaustion, malformed-peer,
+multi-interface, and lifecycle testing remains. - Windows and non-Wi-Fi
+transports are outside the current validated scope.
 
-### Known limitations
+See [`SECURITY.md`](SECURITY.md) for the security architecture,
+validation notes, limitations, and planned work.
 
-OpenCam's security work is ongoing. In particular:
+## Development status
 
-- RTSP media is not yet protected by TLS/RTSPS.
-- RTSP Basic authentication does not encrypt media traffic.
-- Media credentials still exist in process memory while streaming.
-- The control protocol does not currently provide forward secrecy.
-- Additional resource-exhaustion, malformed-peer, and network
-  edge-case testing remains necessary.
+  -----------------------------------------------------------------------
+  Milestone                           Status
+  ----------------------------------- -----------------------------------
+  M1 --- Android-to-Linux video       Complete
+  pipeline                            
 
-The removal of the FFmpeg subprocess-argument exposure path does not
-mean that all possible credential exposure has been eliminated.
+  M2 --- Linux controller and pairing Complete
+  flow                                
 
-See [SECURITY.md](SECURITY.md) for the security architecture,
-validation information, and remaining work.
----
+  M3 --- Pairing and control-channel  Substantially complete; media TLS
+  security                            remains open
 
-## 🛠️ Development Roadmap
+  M4 --- Resolution and performance   Planned
 
-### M1 — Android → Linux Video Pipeline
+  M5 --- USB / ADB transport          Planned
 
-- Android camera streaming
-- RTSP reception
-- FFmpeg integration
-- V4L2 loopback
-- OBS/browser compatibility
+  M6 --- Microphone and A/V           Planned
+  synchronization                     
 
-**Status: ✅ Complete**
+  M7 --- Android UI and rebrand       In progress
 
-### M2 — OpenCam Linux Controller
+  M8 --- Windows implementation       Planned
 
-- Native Linux controller
-- Device descriptor parsing
-- Activation packet generation
-- Dynamic QR pairing
-- Virtual-camera integration
-- Connection handling
+  M9 --- Packaging and release        Planned
+  -----------------------------------------------------------------------
 
-**Status: ✅ Complete**
+## Development and testing
 
-### M3 — Pairing & Network Security
+For the Android RTSP server fork, the authentication unit tests can be
+run from the fork repository with:
 
-- QR-based device pairing
-- Mutual authentication
-- Encrypted control sessions
-- Replay/reordering protection
-- RTSP endpoint validation
-- Shell-injection remediation
-- FFmpeg process isolation
-- Real-device Wi-Fi validation
-- Security audit and remediation
+``` bash
+./gradlew :rtspserver:testDebugUnitTest
+```
 
-**Status: 🟢 Substantially complete**
+The Linux controller uses CMake and the system's FFmpeg development
+libraries. Consult the build files and project-specific setup notes for
+required packages and configuration.
 
-Remaining work includes media-plane encryption, additional network
-edge-case testing, and further resource/error-path hardening.
+## Related repositories
 
-### M4 — Resolution & Performance
+-   OpenCam: <https://github.com/prem-nyx/OpenCam>
+-   OpenCam RTSP server fork: <https://github.com/prem-nyx/RTSP-Server>
+-   Upstream RTSP server project:
+    <https://github.com/pedroSG94/RTSP-Server>
+-   VCamdroid project that provided part of the project's foundation:
+    <https://github.com/darusc/VCamdroid>
 
-- Capability-driven resolution selection
-- 720p / 1080p investigation
-- Latency reduction
-- Buffering improvements
-- CPU/GPU performance investigation
+The RTSP fork maintains OpenCam-specific changes separately from the
+upstream project.
 
-**Status: 📋 Planned**
+## Attribution and licensing
 
-### M5 — USB / ADB Transport
-
-- USB connectivity
-- ADB transport
-- Lower-latency transport investigation
-- Wireless vs wired transport selection
-
-**Status: 📋 Planned**
-
-### M6 — Audio & A/V Synchronization
-
-- Microphone streaming
-- Audio transport
-- Video/audio synchronization
-- Wireless microphone functionality
-
-**Status: 📋 Planned**
-
-### M7 — Android UI & OpenCam Rebrand
-
-- OpenCam Android interface
-- Removal of legacy VCamdroid-facing UI references
-- OpenCam visual identity
-- Android UI refinement
-- Application/package cleanup
-
-**Status: 🚧 In progress**
-
-> The Android application is now branded as **OpenCam**. The existing
-> Android package identifier remains unchanged for the current development
-> phase.
-
-### M8 — Windows Implementation
-
-- Native Windows controller
-- Windows virtual-camera integration
-- Cross-platform controller architecture
-
-**Status: 📋 Planned**
-
-### M9 — Packaging & Release
-
-- Installation workflow
-- Dependency management
-- v4l2loopback setup
-- Documentation
-- Release builds
-- Final testing
-
-**Status: 📋 Planned**
-
----
-
-## 🌱 Project Origin
-
-OpenCam builds upon the open-source
-[VCamdroid](https://github.com/darusc/VCamdroid) project by **Darusc**.
-
-VCamdroid provided the original Android camera streaming architecture
-and Windows-side implementation that OpenCam is building upon.
-
-OpenCam is being developed in a different direction, with a focus on:
-
-- Native Linux support
-- Linux-side device control
-- V4L2 virtual-camera integration
-- Cross-platform architecture
-- Secure device pairing
-- Multiple transport options
-- Higher-resolution streaming
-- Performance and latency improvements
-- Future audio and A/V synchronization
-- A dedicated OpenCam Android interface
-
-The original upstream project and its contributors will be properly
-attributed as part of OpenCam's licensing and attribution work.
-
----
-
-## 🙏 Acknowledgements
-
-OpenCam would not exist without the projects and contributors whose
-work provided its foundation.
-
-### VCamdroid
-
-Original project:
-
-https://github.com/darusc/VCamdroid
-
-Created by **Darusc**.
-
-OpenCam contains and builds upon code originating from VCamdroid.
-The applicable upstream copyright notices and license terms will be
-preserved.
-
-### Softcam
-
-OpenCam also builds upon components originating from **Softcam**.
-
-The applicable upstream attribution and license terms will be
-documented as part of the project's licensing work.
-
-### Other Dependencies
-
-OpenCam uses additional open-source libraries and system components.
-Their licenses and attribution notices will be documented as the
-project approaches its release stage.
-
----
-
-## 📜 License
-
-OpenCam's licensing and third-party attribution are currently being
-formalized.
-
-The project contains code originating from existing open-source
-projects, including VCamdroid and Softcam. Their respective copyright
-notices and license requirements will be preserved.
-
-A complete attribution and licensing document will be included before
-the first formal OpenCam release.
-
----
-
-<div align="center">
-
-### Built by V3NOM
-
-[GitHub](https://github.com/prem-nyx)
-
-</div>
+OpenCam builds on existing open-source software, including work
+originating from VCamdroid and RTSP-Server, along with other libraries
+and system components. Preserve applicable upstream copyright notices
+and license terms. A complete dependency and attribution review is still
+required before a formal release.
+
+## Contributing
+
+OpenCam is under active development. Changes to security-sensitive code
+should include tests and should not claim stronger guarantees than the
+implementation demonstrates. Do not switch media endpoints to `rtsps://`
+until server-side TLS, certificate provisioning, peer verification, and
+end-to-end streaming have been implemented and tested.
+
+## Maintainer
+
+Developed by [V3NOM](https://github.com/prem-nyx).
