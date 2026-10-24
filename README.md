@@ -48,20 +48,20 @@ authenticated and encrypted. The RTSP media path currently uses
 
 ## Current implementation
 
-  Component              Current implementation
-  ---------------------- --------------------------------------
-  Client                 Android
-  Controller             Linux
-  Network                Wi-Fi / TCP
-  Pairing                QR-delivered, random pairing secret
-  Control protocol       OCAM v2
-  Control encryption     AES-256-GCM
-  Key derivation         HKDF-SHA256
-  Media transport        RTSP over TCP
-  Video output           V4L2 loopback
-  Video codec tested     H.264
-  Resolution validated   640 × 480
-  Consumers              OBS and compatible V4L2 applications
+| Component | Current implementation |
+|---|---|
+| Client | Android |
+| Controller | Linux |
+| Network | Wi-Fi over TCP |
+| Pairing | QR-delivered, random pairing secret |
+| Control protocol | OCAM v2 |
+| Control encryption | AES-256-GCM |
+| Key derivation | HKDF-SHA256 |
+| Media transport | RTSP over TCP |
+| Video output | V4L2 loopback |
+| Video codec tested | H.264 |
+| Resolution validated | 640 × 480 |
+| Consumers | OBS and compatible V4L2 applications |
 
 Resolution, latency, and compatibility can vary with the device,
 network, codec configuration, and host system.
@@ -77,44 +77,33 @@ The Android RTSP server fork also includes RTSP Basic-authentication
 hardening and unit tests. Basic authentication is not encryption, and it
 does not protect media confidentiality on its own.
 
-**Known limitations** - RTSP media is not yet protected by RTSPS/TLS. -
-The control protocol does not currently provide forward secrecy. - The
-media URL and derived credential remain present in process memory while
-streaming. - Additional resource-exhaustion, malformed-peer,
-multi-interface, and lifecycle testing remains. - Windows and non-Wi-Fi
-transports are outside the current validated scope.
+### Known limitations
 
+- RTSP media is not yet protected by TLS.
+- The control protocol does not currently provide forward secrecy.
+- The media URL and derived credential remain in process memory while
+  streaming.
+- Additional resource-exhaustion, malformed-peer, multi-interface, and
+  lifecycle testing remains.
+- Windows and non-Wi-Fi transports are outside the current validated
+  scope.
+  
 See [`SECURITY.md`](SECURITY.md) for the security architecture,
 validation notes, limitations, and planned work.
 
 ## Development status
 
-  -----------------------------------------------------------------------
-  Milestone                           Status
-  ----------------------------------- -----------------------------------
-  M1 --- Android-to-Linux video       Complete
-  pipeline                            
-
-  M2 --- Linux controller and pairing Complete
-  flow                                
-
-  M3 --- Pairing and control-channel  Substantially complete; media TLS
-  security                            remains open
-
-  M4 --- Resolution and performance   Planned
-
-  M5 --- USB / ADB transport          Planned
-
-  M6 --- Microphone and A/V           Planned
-  synchronization                     
-
-  M7 --- Android UI and rebrand       In progress
-
-  M8 --- Windows implementation       Planned
-
-  M9 --- Packaging and release        Planned
-  
-  -----------------------------------------------------------------------
+| Milestone | Scope | Status |
+|---|---|---|
+| M1 | Android-to-Linux video pipeline | Complete |
+| M2 | Linux controller and pairing flow | Complete |
+| M3 | Pairing and control-channel security | Substantially complete; media TLS remains open |
+| M4 | Resolution and performance | Planned |
+| M5 | USB / ADB transport | Planned |
+| M6 | Microphone and A/V synchronization | Planned |
+| M7 | Android UI and rebrand | In progress |
+| M8 | Windows implementation | Planned |
+| M9 | Packaging and release | Planned |
 
 ## Development and testing
 
