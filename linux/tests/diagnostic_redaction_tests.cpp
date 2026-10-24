@@ -23,6 +23,21 @@ int main()
     assert(redactedRepeated.find(secret) == std::string::npos);
     assert(redactedRepeated.find("u:pw") == std::string::npos);
 
+    // RTSPS credentials must also be redacted.
+    const std::string secureUrl =
+        "TLS failure: rtsps://user:" + secret + "@host:8554/live";
+    const std::string secureOutput = redactRtspCredentials(secureUrl);
+    assert(secureOutput.find(secret) == std::string::npos);
+    assert(secureOutput.find("rtsps://[REDACTED]@host:8554/live") != std::string::npos);
+
+    // Scheme matching must remain case-insensitive for RTSPS.
+    const std::string mixedCaseSecureUrl =
+        "TLS failure: RTSPS://user:" + secret + "@host:8554/live";
+    const std::string mixedCaseSecureOutput =
+        redactRtspCredentials(mixedCaseSecureUrl);
+    assert(mixedCaseSecureOutput.find(secret) == std::string::npos);
+    assert(mixedCaseSecureOutput.find("RTSPS://[REDACTED]@host:8554/live") != std::string::npos);
+
     // A credential-bearing URL split across pipe reads must not be emitted early.
     DiagnosticLineRedactor split;
     assert(split.consume("failure rtsp://opencam:SUPER_SECRET_").empty());
