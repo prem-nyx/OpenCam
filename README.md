@@ -116,40 +116,43 @@ controller, and bridged into a V4L2 virtual camera using FFmpeg.
 
 ## 🔐 Security
 
-Security hardening is a major part of the current development milestone.
+OpenCam's current security work focuses on authenticated device pairing,
+encrypted control communication, input validation, and safer media
+processing.
 
-The Linux ↔ Android control plane currently provides:
+### Implemented protections
 
--  QR-based pairing using a random pairing secret
--  Mutual authentication
--  AES-256-GCM encrypted control frames
--  HKDF-SHA256 session key derivation
--  Directional session keys
--  Sequence-based replay/reordering protection
--  Bounded protocol parsing
--  RTSP endpoint validation
--  Shell-free FFprobe/FFmpeg process execution
--  FFmpeg process and file-descriptor isolation
+The Linux ↔ Android control channel includes:
 
-The implementation has been validated with a real Android device over
-Wi-Fi, including encrypted control traffic and end-to-end video delivery.
+- QR-based pairing with a random pairing secret
+- Mutual authentication
+- AES-256-GCM encrypted control frames
+- HKDF-SHA256 key derivation with directional session keys
+- Sequence-based replay and reordering protection
+- Bounded protocol parsing and connection timeouts
+- RTSP endpoint validation
+- In-process FFmpeg library calls for media probing and decoding
+- Generic media errors and reduced diagnostic exposure
 
-### Current security limitations
+The Android RTSP server fork also contains authentication hardening
+that requires Basic authentication for supported RTSP request methods.
 
-The security model is still under development.
+### Known limitations
 
-In particular:
+OpenCam's security work is ongoing. In particular:
 
-- RTSP media is not currently protected by TLS/RTSPS.
-- The current FFmpeg media pipeline can expose the RTSP credential through
-  the process command line.
-- The current protocol does not provide forward secrecy.
-- Additional resource, malformed-peer, and network edge-case testing
-  remains ongoing.
+- RTSP media is not yet protected by TLS/RTSPS.
+- RTSP Basic authentication does not encrypt media traffic.
+- Media credentials still exist in process memory while streaming.
+- The control protocol does not currently provide forward secrecy.
+- Additional resource-exhaustion, malformed-peer, and network
+  edge-case testing remains necessary.
 
-See [`SECURITY.md`](SECURITY.md) for the complete security status and
-future hardening work.
+The removal of the FFmpeg subprocess-argument exposure path does not
+mean that all possible credential exposure has been eliminated.
 
+See [SECURITY.md](SECURITY.md) for the security architecture,
+validation information, and remaining work.
 ---
 
 ## 🛠️ Development Roadmap
