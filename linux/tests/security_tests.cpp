@@ -23,12 +23,12 @@ int main()
     clientNonce.fill(0x34);
 
     std::array<std::uint8_t, 32> proof{};
-    assert(makeProof(secret, "OpenCam client proof v1", serverNonce,
+    assert(makeProof(secret, "OpenCam client proof v2", serverNonce,
                      clientNonce, proof));
     auto wrongSecret = secret;
     wrongSecret[0] ^= 1;
     std::array<std::uint8_t, 32> wrongProof{};
-    assert(makeProof(wrongSecret, "OpenCam client proof v1", serverNonce,
+    assert(makeProof(wrongSecret, "OpenCam client proof v2", serverNonce,
                      clientNonce, wrongProof));
     assert(!constantTimeEqual(proof.data(), wrongProof.data(), proof.size()));
 
@@ -36,7 +36,7 @@ int main()
     assert(deriveSessionKey(secret, serverNonce, clientNonce, key));
     std::array<std::uint8_t, 32> zeroSessionKey{};
     assert(deriveMediaPassword(zeroSessionKey) ==
-       "3d71315941fed222d06ace2d99f2f5210fdbe4df5c3be2dc673e13c414bac9b5");
+           "3d71315941fed222d06ace2d99f2f5210fdbe4df5c3be2dc673e13c414bac9b5");
     int sockets[2]{};
     assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
     AuthenticatedChannel sender{sockets[0], key, true};
@@ -91,5 +91,9 @@ int main()
     assert(!isAllowedRtspEndpoint("rtsp://10.0.0.2:554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));
     assert(!isAllowedRtspEndpoint("rtsp://user:pass@10.0.0.2:8554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));
     assert(!isAllowedRtspEndpoint("rtsp://10.0.0.2:8554/live/0123456789abcdef0123456789abcdef?x=1", "10.0.0.2"));
+
+    assert(isAllowedRtspEndpoint("rtsps://10.0.0.2:8554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));
+    assert(!isAllowedRtspEndpoint("rtsps://10.0.0.3:8554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));
+    assert(!isAllowedRtspEndpoint("rtsps://user:pass@10.0.0.2:8554/live/0123456789abcdef0123456789abcdef", "10.0.0.2"));
     return 0;
 }

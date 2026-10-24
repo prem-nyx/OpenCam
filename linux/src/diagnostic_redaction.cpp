@@ -5,17 +5,27 @@
 
 namespace
 {
+
     bool startsWithRtspScheme(const std::string &value, std::size_t pos)
     {
-        constexpr char scheme[] = "rtsp://";
-        if (pos + sizeof(scheme) - 1 > value.size())
-            return false;
-        for (std::size_t i = 0; i < sizeof(scheme) - 1; ++i)
+        constexpr char rtspScheme[] = "rtsp://";
+        constexpr char rtspsScheme[] = "rtsps://";
+
+        const auto matchesScheme = [&](const char *scheme, std::size_t length)
         {
-            if (std::tolower(static_cast<unsigned char>(value[pos + i])) != scheme[i])
+            if (pos + length > value.size())
                 return false;
-        }
-        return true;
+
+            for (std::size_t i = 0; i < length; ++i)
+            {
+                if (std::tolower(static_cast<unsigned char>(value[pos + i])) != scheme[i])
+                    return false;
+            }
+            return true;
+        };
+
+        return matchesScheme(rtspsScheme, sizeof(rtspsScheme) - 1) ||
+               matchesScheme(rtspScheme, sizeof(rtspScheme) - 1);
     }
 
     std::string redactCompleteLine(const std::string &line)
@@ -41,12 +51,19 @@ namespace
             }
 
             output.append(line, cursor, schemePos - cursor);
-            output.append(line, schemePos, 7);
-            std::size_t authorityEnd = line.find_first_of("/?# \t\r\n\"'<>)]}", schemePos + 7);
+            const bool isRtsps =
+                schemePos + 8 <= line.size() &&
+                std::tolower(static_cast<unsigned char>(line[schemePos + 4])) == 's' &&
+                startsWithRtspScheme(line, schemePos);
+
+            const std::size_t schemeLength = isRtsps ? 8 : 7;
+            output.append(line, schemePos, schemeLength);
+            std::size_t authorityEnd = line.find_first_of(
+                "/?# \t\r\n\"'<>)]}", schemePos + schemeLength);
             if (authorityEnd == std::string::npos)
                 authorityEnd = line.size();
 
-            const std::size_t authorityStart = schemePos + 7;
+            const std::size_t authorityStart = schemePos + schemeLength;
             const std::size_t at = line.rfind('@', authorityEnd);
             if (at != std::string::npos && at >= authorityStart && at < authorityEnd)
             {

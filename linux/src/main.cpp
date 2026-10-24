@@ -339,7 +339,7 @@ int main()
 
     std::cout
         << "OpenCam Linux controller "
-           "(control protocol v1)\n";
+           "(control protocol v2)\n";
 
     const std::string localIp =
         getLocalIpAddress();
