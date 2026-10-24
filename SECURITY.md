@@ -170,39 +170,20 @@ tested.
 
 ## Current status
 
-  -----------------------------------------------------------------------
-  Area                                Status
-  ----------------------------------- -----------------------------------
-  QR pairing and mutual control       Implemented
-  authentication                      
-
-  AES-256-GCM control encryption      Implemented
-
-  HKDF-SHA256 and directional keys    Implemented
-
-  Sequence validation and bounded     Implemented
-  protocol parsing                    
-
-  RTSP endpoint validation            Implemented
-
-  Removal of RTSP URL from FFmpeg     Implemented
-  subprocess arguments                
-
-  In-process FFmpeg pipeline and      Implemented and live-tested during
-  reduced diagnostics                 development
-
-  RTSP Basic-authentication hardening Implemented; unit tests reported
-  in fork                             passing
-
-  End-to-end RTSPS/TLS                Not implemented
-
-  Forward secrecy                     Not implemented
-
-  Broader resource and hostile-peer   Ongoing
-  testing                             
-
-  Windows security integration        Future work
-  -----------------------------------------------------------------------
+| Area | Status |
+|---|---|
+| QR pairing and mutual control authentication | Implemented |
+| AES-256-GCM control encryption | Implemented |
+| HKDF-SHA256 and directional keys | Implemented |
+| Sequence validation and bounded protocol parsing | Implemented |
+| RTSP endpoint validation | Implemented |
+| Removal of RTSP URL from FFmpeg subprocess arguments | Implemented |
+| In-process FFmpeg pipeline and reduced diagnostics | Implemented and live-tested during development |
+| RTSP Basic-authentication hardening in fork | Implemented; unit tests reported passing |
+| End-to-end RTSPS/TLS | Not implemented |
+| Forward secrecy | Not implemented |
+| Broader resource and hostile-peer testing | Ongoing |
+| Windows security integration | Future work |
 
 ## Planned security work
 
